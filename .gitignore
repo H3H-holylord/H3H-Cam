@@ -16,3 +16,18 @@
 *.log
 /windows/tools/
 /windows/models/
+
+# Local distribution, diagnostics and optional model weights
+/*.exe
+/*.apk
+/*.zip
+/*.pdf
+/*.onnx
+/*.tflite
+/*.png
+/models/
+/assets/
+/ANTIGRAVITY.md
+/TESTING.md
+/VERIFICATION.md
+/QUICKSTART-4.0.[1-4].md
