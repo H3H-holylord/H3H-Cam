@@ -1,0 +1,765 @@
+﻿<Window x:Class="S8Cam.MainWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="H3H Cam 4.0.5" Icon="app.ico" Width="1180" Height="900" MinWidth="1000" MinHeight="680"
+ Background="#090F1A" Foreground="#E7F0FF" FontFamily="Segoe UI" FontSize="14" UseLayoutRounding="True" SnapsToDevicePixels="True"
+ WindowStartupLocation="CenterScreen">
+ <Grid Margin="24">
+  <Grid.RowDefinitions>
+   <RowDefinition Height="Auto"/>
+   <RowDefinition Height="Auto"/>
+   <RowDefinition Height="*"/>
+   <RowDefinition Height="Auto"/>
+  </Grid.RowDefinitions>
+
+  <!-- Заголовок -->
+  <Grid Margin="0,0,0,14">
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+    <Image Source="app.png" Width="42" Height="42" Margin="0,0,14,0" VerticalAlignment="Center"/>
+    <StackPanel VerticalAlignment="Center">
+     <TextBlock Text="H3H CAM" FontSize="32" FontWeight="Bold"/>
+     <TextBlock Text="КАМЕРА ТЕЛЕФОНА · ВАША СТУДИЯ НА КОМПЬЮТЕРЕ" Foreground="#42D8B2" FontSize="11" Margin="2,2,0,0"/>
+    </StackPanel>
+   </StackPanel>
+   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+    <Button x:Name="ModeToggleButton" Content="⚙️ Pro Режим" Click="ModeToggle_Click" Padding="12,6" Margin="0,0,10,0" Background="#162D42" Foreground="#00d2ff" FontWeight="SemiBold" FontSize="12" ToolTip="Переключение между простым базовым интерфейсом и расширенными Pro-настройками"/>
+    <Border Background="#152C2B" CornerRadius="16" Padding="16,8">
+     <TextBlock x:Name="ConnectionLabel" Text="●  Готов к подключению" Foreground="#70E5C3" FontWeight="SemiBold"/>
+    </Border>
+   </StackPanel>
+  </Grid>
+
+  <!-- Панель быстрых профилей качества в 1 клик -->
+  <Border x:Name="ProPresetBar" Grid.Row="1" Margin="0,0,0,14" Background="#0C1524" CornerRadius="10" Padding="12,7">
+   <Grid>
+    <Grid.ColumnDefinitions>
+     <ColumnDefinition Width="Auto"/>
+     <ColumnDefinition Width="*"/>
+     <ColumnDefinition Width="Auto"/>
+    </Grid.ColumnDefinitions>
+    <TextBlock Text="ПРЕСЕТЫ:" FontSize="11" FontWeight="Bold" Foreground="#8498B4" VerticalAlignment="Center" Margin="0,0,10,0"/>
+    <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+     <Button x:Name="PresetStreamingBtn" Content="🎮 Стриминг (1080p60 Spout2)" Click="PresetStreaming_Click" Padding="8,5" Margin="0,2,6,2" Background="#162D42" Foreground="#00d2ff" FontSize="11.5" ToolTip="1080p 60 FPS, HEVC, 18 Mbps, Spout2 ВКЛ, MPEG-TS ВЫКЛ, авто-фрейминг"/>
+     <Button x:Name="PresetConferenceBtn" Content="💼 Конференции (720p30 Bokeh)" Click="PresetConference_Click" Padding="8,5" Margin="0,2,6,2" Background="#162D42" Foreground="#70E5C3" FontSize="11.5" ToolTip="720p 30 FPS, AVC, 6 Mbps, Виртуальная камера ВКЛ, размытие фона Боке"/>
+     <Button x:Name="PresetProBtn" Content="🎬 Pro Качество (1440p30 Spout2)" Click="PresetPro_Click" Padding="8,5" Margin="0,2,6,2" Background="#162D42" Foreground="#FFD700" FontSize="11.5" ToolTip="1440p 2K 30 FPS, HEVC, 25 Mbps, максимальная детализация, Spout2"/>
+     <Button x:Name="PresetEcoBtn" Content="🍃 Эко-режим (720p30 Saving)" Click="PresetEco_Click" Padding="8,5" Margin="0,2,8,2" Background="#162D42" Foreground="#A8FFB2" FontSize="11.5" ToolTip="720p 30 FPS, AVC, 4 Mbps, энергосбережение 30 FPS HAL1, минимальный нагрев"/>
+
+     <!-- Разделитель -->
+     <Border Width="1" Height="22" Background="#1F364D" Margin="2,2,10,2" VerticalAlignment="Center"/>
+
+     <!-- Пользовательские пресеты -->
+     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
+      <ComboBox x:Name="CustomPresetsCombo" MinWidth="140" MaxWidth="210" Height="27" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="11.5" SelectionChanged="CustomPresetsCombo_SelectionChanged" ToolTip="Выберите сохранённый пользовательский пресет для мгновенного применения"/>
+      <Button x:Name="SavePresetButton" Content="💾 Сохранить" Click="SavePreset_Click" Padding="8,4" Margin="0,0,4,0" Background="#163A36" Foreground="#70E5C3" FontSize="11.5" ToolTip="Сохранить текущую конфигурацию камеры как пользовательский пресет"/>
+      <Button x:Name="DeletePresetButton" Content="🗑️" Click="DeletePreset_Click" Padding="7,4" Margin="0,0,4,0" Background="#2B1822" Foreground="#FF6B6B" FontSize="11.5" ToolTip="Удалить выбранный пользовательский пресет"/>
+     </StackPanel>
+    </WrapPanel>
+    <Button Grid.Column="2" Content="Настроить OBS…" Click="OptimizeObs_Click" Padding="10,5" Background="#1B2F44" Foreground="#00e5ff" FontSize="11.5" ToolTip="Инструкция по подключению OBS без изменения ваших сцен"/>
+   </Grid>
+  </Border>
+
+  <!-- Основная рабочая область: Слева Вкладки настроек, Справа Превью и Телеметрия -->
+  <Grid Grid.Row="2">
+   <Grid.ColumnDefinitions>
+    <ColumnDefinition Width="1.1*"/>
+    <ColumnDefinition Width="18"/>
+    <ColumnDefinition Width="*"/>
+   </Grid.ColumnDefinitions>
+
+   <!-- Левая колонка: Базовый режим (BasicPanel) или Pro режим (SettingsPanel) -->
+   <Border Background="{StaticResource PanelBrush}" CornerRadius="14" Padding="14">
+    <Grid>
+     <!-- 1. Базовый режим (Basic Mode) -->
+     <ScrollViewer x:Name="BasicPanel" VerticalScrollBarVisibility="Auto" Padding="4,4,8,4" Visibility="Collapsed">
+      <StackPanel>
+       <!-- Карточка устройства -->
+       <Border Background="#0C1524" CornerRadius="10" Padding="14" Margin="0,0,0,12" BorderBrush="#1C2E42" BorderThickness="1">
+        <StackPanel>
+         <DockPanel Margin="0,0,0,6">
+          <TextBlock Text="📱 УСТРОЙСТВО" FontSize="12" FontWeight="Bold" Foreground="#42D8B2" VerticalAlignment="Center"/>
+          <TextBlock x:Name="BasicTransportBadge" Text="НЕ ПОДКЛЮЧЕНО" Foreground="#70E5C3" Background="#162D42" Padding="6,2" FontSize="10.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+         </DockPanel>
+         <TextBlock x:Name="BasicDeviceNameText" Text="Подключите телефон" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
+         <TextBlock x:Name="BasicBatteryText" Text="🔋 Батарея: ожидание подключения" Foreground="#BFCDE0" FontSize="12.5" Margin="0,0,0,2"/>
+         <TextBlock x:Name="BasicTransportText" Text="Выберите подключение и нажмите «Найти телефон»." Foreground="#8498B4" FontSize="11" TextWrapping="Wrap"/>
+        </StackPanel>
+       </Border>
+
+       <TextBlock Text="01 / ПОДКЛЮЧЕНИЕ" FontSize="11" FontWeight="SemiBold" Foreground="#42D8B2" Margin="0,4,0,6"/>
+       <ComboBox x:Name="BasicTransportChoice" SelectedIndex="{Binding SelectedIndex, ElementName=Transport, Mode=TwoWay}" Margin="0,4,0,8">
+        <ComboBoxItem Content="Авто · USB Direct / ADB / Wi-Fi"/>
+        <ComboBoxItem Content="Wi-Fi · через локальную сеть"/>
+        <ComboBoxItem Content="USB · через ADB"/>
+        <ComboBoxItem Content="USB Direct · нужен WinUSB"/>
+       </ComboBox>
+       <TextBox Text="{Binding Text, ElementName=PhoneIp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" ToolTip="IP-адрес телефона для Wi-Fi">
+        <TextBox.Style><Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+         <Setter Property="Visibility" Value="Collapsed"/>
+         <Style.Triggers><DataTrigger Binding="{Binding SelectedIndex, ElementName=Transport}" Value="1"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+        </Style></TextBox.Style>
+       </TextBox>
+       <Button Content="Найти телефон" Click="Scan_Click" IsEnabled="{Binding IsEnabled, ElementName=ScanButton}" HorizontalAlignment="Stretch" Margin="0,0,0,6"/>
+       <TextBlock Text="{Binding Text, ElementName=DeviceHint}" Foreground="#8498B4" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,16"/>
+       <!-- Камера -->
+       <TextBlock Text="02 / КАМЕРА" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
+       <ComboBox x:Name="BasicCameraChoice" DisplayMemberPath="Label" SelectedValuePath="Key" SelectionChanged="BasicCameraChoice_Changed" Margin="0,0,0,8"/>
+
+
+       <!-- Ориентация кадра -->
+       <TextBlock Text="Ориентация кадра" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
+       <UniformGrid Columns="2" Margin="0,0,0,12">
+        <RadioButton x:Name="BasicOrientation169" Content="🖥️ 16:9 Горизонт" GroupName="BasicOrientation" Checked="BasicOrientation_Checked" FontSize="12.5" Padding="4,0,0,0" VerticalContentAlignment="Center"/>
+        <RadioButton x:Name="BasicOrientation916" Content="📱 9:16 Shorts" GroupName="BasicOrientation" Checked="BasicOrientation_Checked" FontSize="12.5" Padding="4,0,0,0" VerticalContentAlignment="Center"/>
+       </UniformGrid>
+
+       <!-- Пресет качества -->
+       <TextBlock Text="Пресет качества" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
+       <UniformGrid Columns="2" Margin="0,0,0,12">
+        <Button Content="🎮 Стриминг (1080p60)" Click="PresetStreaming_Click" Padding="8,8" Margin="0,0,4,4" Background="#162D42" Foreground="#00d2ff" FontSize="11.5"/>
+        <Button Content="💼 Конференции (720p)" Click="PresetConference_Click" Padding="8,8" Margin="4,0,0,4" Background="#162D42" Foreground="#70E5C3" FontSize="11.5"/>
+        <Button Content="🎬 Pro Качество (1440p)" Click="PresetPro_Click" Padding="8,8" Margin="0,4,4,0" Background="#162D42" Foreground="#FFD700" FontSize="11.5"/>
+        <Button Content="🍃 Эко-режим (30 FPS)" Click="PresetEco_Click" Padding="8,8" Margin="4,4,0,0" Background="#162D42" Foreground="#A8FFB2" FontSize="11.5"/>
+       </UniformGrid>
+
+       <!-- Быстрые переключатели -->
+       <TextBlock Text="03 / ВЫХОДЫ И ПРЕДПРОСМОТР" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
+       <CheckBox x:Name="BasicPreviewCheck" Content="Показывать предпросмотр" IsChecked="{Binding IsChecked, ElementName=Preview, Mode=TwoWay}" Margin="0,0,0,8"/>
+       <CheckBox Content="Гасить экран телефона (ADB)" IsChecked="{Binding IsChecked, ElementName=ScreenOff, Mode=TwoWay}" Margin="0,0,0,8"/>
+       <CheckBox x:Name="BasicVirtualCamCheck" Content="Виртуальная камера (Zoom / Discord)" Click="BasicVirtualCam_Click" Margin="0,0,0,8"/>
+       <CheckBox x:Name="BasicSpoutCheck" Content="Spout2 для OBS Studio" Click="BasicSpout_Click" Margin="0,0,0,8"/>
+       <CheckBox x:Name="BasicFaceTrackingCheck" Content="Авто-слежение за лицом (Center Stage)" Click="BasicFaceTracking_Click" Margin="0,0,0,8"/>
+       <CheckBox x:Name="BasicStabilizationCheck" Content="🎯 Стабилизация от тряски (OIS / EIS)" Click="BasicStabilization_Click" Margin="0,0,0,4"/>
+       <CheckBox x:Name="BasicSuperSteadyCheck" Content="🚀 Усиленный Super Steady (анти-вибрация мыши)" Click="BasicSuperSteady_Click" Margin="20,0,0,14" ToolTip="Анти-вибрационный буфер сенсора: поглощает сильную раскачку стола и резкие движения мыши"/>
+
+       <!-- Большая кнопка Старт -->
+       <Button x:Name="BasicStartButton" Content="▶  НАЧАТЬ ТРАНСЛЯЦИЮ" Height="50" Background="#1CA989" Foreground="#041C16" FontWeight="Bold" FontSize="16" Click="BasicStart_Click" Margin="0,0,0,10"/>
+
+       <!-- Переход в Pro режим -->
+       <Button Content="⚙️ Расширенные настройки (Pro Mode) →" Click="ModeToggle_Click" Background="Transparent" Foreground="#42D8B2" BorderThickness="0" Cursor="Hand" HorizontalAlignment="Center" FontSize="12" Margin="0,6,0,6"/>
+      </StackPanel>
+     </ScrollViewer>
+
+     <!-- 2. Расширенный режим (Pro Mode) -->
+     <TabControl x:Name="SettingsPanel">
+
+     <!-- Вкладка 1: 🔌 Связь -->
+     <TabItem Header="🔌 Связь">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4,12,8,0">
+       <StackPanel>
+        <TextBlock Text="Подключение смартфона" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Режим подключения"/>
+        <ComboBox x:Name="Transport">
+         <ComboBoxItem Content="Авто · активный USB Direct, ADB, Wi-Fi"/>
+         <ComboBoxItem Content="Wi-Fi · RTP"/>
+         <ComboBoxItem Content="USB · кабель без Wi-Fi"/>
+         <ComboBoxItem Content="USB Direct · без ADB и режима разработчика"/>
+        </ComboBox>
+
+        <TextBlock Text="Телефон"/>
+        <Grid>
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+         <ComboBox x:Name="DeviceChoice" DisplayMemberPath="Label" SelectedValuePath="Key" Margin="0,4,8,10"/>
+         <Button Grid.Column="1" x:Name="ScanButton" Content="НАЙТИ" Click="Scan_Click" Margin="0,4,0,10" Padding="16,8"/>
+        </Grid>
+        <TextBlock x:Name="DeviceHint" Text="USB Direct не требует режима разработчика. При первом подключении Windows может потребоваться драйвер WinUSB для H3H Cam." Foreground="#8498B4" FontSize="11.5" TextWrapping="Wrap" Margin="0,-4,4,10"/>
+
+        <CheckBox x:Name="ScreenOff" Content="Гасить экран телефона после появления видео" Margin="0,0,0,6"/>
+
+        <DockPanel Margin="0,0,0,4">
+         <Button x:Name="InstallVirtualCamButton" Content="📥 Установить DirectShow VCam" Click="InstallVirtualCam_Click" DockPanel.Dock="Right" Padding="10,4" Margin="6,0,0,0" FontSize="11" Background="#203A4E" Foreground="#70E5C3" Visibility="Collapsed"/>
+         <CheckBox x:Name="VirtualCamera" Content="Виртуальная камера для Discord / Zoom / Telegram" VerticalAlignment="Center"/>
+        </DockPanel>
+        <TextBlock x:Name="VirtualCamStatusText" Text="● Проверка статуса виртуальной камеры..." Foreground="#8498B4" FontSize="11" Margin="24,-2,0,8"/>
+
+        <CheckBox x:Name="Preview" Content="Показывать предпросмотр · можно переключать во время стрима" Checked="Preview_Changed" Unchecked="Preview_Changed" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Сетевые адреса (Wi-Fi / LAN)" FontSize="14" FontWeight="SemiBold" Margin="0,6,0,6"/>
+        <Grid>
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,4,0"><TextBlock Text="Адрес телефона · IP:порт"/><TextBox x:Name="PhoneIp"/></StackPanel>
+         <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Адрес компьютера"/><TextBox x:Name="PcIp"/></StackPanel>
+        </Grid>
+
+        <DockPanel Margin="0,4,0,8">
+         <Button x:Name="ShowQrButton" Content="📱 QR-код / Wi-Fi автопоиск" Click="ShowQr_Click" DockPanel.Dock="Right" Padding="12,5" FontSize="11" Margin="6,0,0,0" Background="#1B2F44" Foreground="#70E5C3"/>
+         <CheckBox x:Name="AutoPcIp" Content="Автоматически выбирать адрес ПК" Checked="AutoPcIp_Changed" Unchecked="AutoPcIp_Changed" VerticalAlignment="Center"/>
+        </DockPanel>
+
+        <TextBlock Text="Порты передачи данных" FontSize="14" FontWeight="SemiBold" Margin="0,6,0,6"/>
+        <Grid>
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,3,0"><TextBlock Text="RTP порт"/><TextBox x:Name="RtpPort"/></StackPanel>
+         <StackPanel Grid.Column="1" Margin="3,0,3,0"><TextBlock Text="USB порт"/><TextBox x:Name="UsbPort"/></StackPanel>
+         <StackPanel Grid.Column="2" Margin="3,0,0,0"><TextBlock Text="OBS порт"/><TextBox x:Name="ObsPort"/></StackPanel>
+        </Grid>
+
+        <TextBlock Text="Автоматизация подключения" FontSize="14" FontWeight="SemiBold" Margin="0,12,0,6"/>
+        <CheckBox x:Name="AutoReconnect" Content="🔄 Авто-переподключение USB при выпадении кабеля (Watchdog)" ToolTip="Автоматически восстанавливает поток без перезапуска приложения при случайном отключении/подключении USB" Margin="0,0,0,6"/>
+        <CheckBox x:Name="AutoStartOnUsb" Content="⚡ Автостарт при подключении USB (Plug &amp; Play)" Margin="0,0,0,6"/>
+        <CheckBox x:Name="AutoStart" Content="🚀 Автоматически запускать поток при открытии клиента" Margin="0,0,0,6"/>
+       </StackPanel>
+      </ScrollViewer>
+     </TabItem>
+
+     <!-- Вкладка 2: 🎥 Камера -->
+     <TabItem Header="🎥 Камера">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4,12,8,0">
+       <StackPanel>
+        <TextBlock Text="Сенсор и видеопоток" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Модуль камеры"/>
+        <ComboBox x:Name="CameraChoice" DisplayMemberPath="Label" SelectedValuePath="Key" SelectionChanged="CameraChoice_Changed"/>
+        <TextBlock x:Name="CameraHint" Text="После поиска здесь появятся все камеры, которые Android открыл через Camera2." Foreground="#8498B4" FontSize="11.5" TextWrapping="Wrap" Margin="0,-2,4,10"/>
+
+        <Grid>
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,4,0"><TextBlock Text="Разрешение"/><ComboBox x:Name="ResolutionChoice" DisplayMemberPath="Label" SelectionChanged="ResolutionChoice_Changed"/></StackPanel>
+         <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Частота кадров"/><ComboBox x:Name="Fps"/></StackPanel>
+        </Grid>
+
+        <Grid>
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,4,0"><TextBlock Text="Битрейт · Mbps"/><TextBox x:Name="Bitrate"/></StackPanel>
+         <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Кодек видео"/><ComboBox x:Name="CodecChoice">
+          <ComboBoxItem Content="H.264 / AVC · универсальный"/>
+          <ComboBoxItem Content="H.265 / HEVC · максимальное качество"/>
+         </ComboBox></StackPanel>
+        </Grid>
+
+        <Grid Margin="0,4,0,6">
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,4,0"><TextBlock Text="Цифровой зум"/><ComboBox x:Name="ZoomChoice">
+          <ComboBoxItem Content="1.0x · без приближения"/>
+          <ComboBoxItem Content="1.2x"/>
+          <ComboBoxItem Content="1.5x"/>
+          <ComboBoxItem Content="2.0x"/>
+          <ComboBoxItem Content="3.0x"/>
+         </ComboBox></StackPanel>
+         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,18,0,0">
+          <CheckBox x:Name="Torch" Content="🔦 Подсветка · фонарик"/>
+         </StackPanel>
+        </Grid>
+
+        <WrapPanel Margin="0,2,0,4">
+         <CheckBox x:Name="LowLatency" Content="⚡ Минимальная задержка" Margin="0,0,16,4"/>
+         <CheckBox x:Name="ObsOutput" Content="📡 Доп. MPEG-TS выход для OBS" Margin="0,0,16,4"/>
+         <CheckBox x:Name="SpoutOutput" Content="Spout2 · выход в OBS" ToolTip="Передача текстуры Direct3D 11 в OBS. Декодирование и эффекты используют ресурсы компьютера." Margin="0,0,0,4"/>
+        </WrapPanel>
+        <Button Content="🧹 Оптимизировать сцены OBS для Spout2" Click="OptimizeObs_Click" HorizontalAlignment="Left" Margin="0,0,0,10" Padding="10,4" Background="#142638" Foreground="#00e5ff" FontSize="11" ToolTip="Отключает устаревший источник 5001 в сценах OBS и гарантирует работу Spout2"/>
+
+        <!-- 💎 AI Super Resolution 4K -->
+        <Border Background="#0C1524" CornerRadius="8" Padding="10" Margin="0,0,0,10">
+         <StackPanel>
+          <DockPanel Margin="0,0,0,6">
+           <CheckBox x:Name="SuperResolution4KCheck" Content="💎 AI Super Resolution 4K (3840×2160 @ 60 FPS)" FontWeight="SemiBold" Foreground="#42D8B2" VerticalAlignment="Center" ToolTip="Аппаратный супер-резолюшн на RTX 4070 Ti: телефон шлет 1080p/1440p без перегрева, а в Spout2 и OBS уходит ультрачеткий честный 4K UHD поток"/>
+           <TextBlock Text="RTX 4070 Ti" Foreground="#00FFB2" FontSize="11" FontWeight="Bold" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+          </DockPanel>
+          <DockPanel Margin="0,2,0,2">
+           <TextBlock Text="Контрастно-адаптивная резкость (RCAS):" FontSize="11.5" Foreground="#8498B4" VerticalAlignment="Center"/>
+           <TextBlock x:Name="SuperResolutionSharpnessText" Text="20%" Foreground="#42D8B2" FontSize="11.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+          </DockPanel>
+          <Slider x:Name="SuperResolutionSharpnessSlider" Minimum="0.0" Maximum="0.50" Value="0.20" SmallChange="0.02" LargeChange="0.10" ValueChanged="SuperResolutionSharpnessSlider_ValueChanged"/>
+         </StackPanel>
+        </Border>
+
+        <TextBlock Text="Экспозиция и профессиональный фокус" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,8"/>
+
+        <Grid>
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,4,0"><TextBlock Text="Режим фокуса"/><ComboBox x:Name="FocusMode">
+          <ComboBoxItem Content="Непрерывный"/><ComboBoxItem Content="Авто · один раз"/><ComboBoxItem Content="Бесконечность"/><ComboBoxItem Content="Ручной"/>
+         </ComboBox></StackPanel>
+         <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Ручной фокус · диоптрии"/><TextBox x:Name="FocusDistance"/></StackPanel>
+        </Grid>
+
+        <Grid>
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,4,0"><TextBlock Text="Выдержка (Shutter Speed)"/><ComboBox x:Name="ShutterChoice">
+          <ComboBoxItem Content="Авто (AE)"/>
+          <ComboBoxItem Content="1/25 с · 40 ms"/>
+          <ComboBoxItem Content="1/30 с · 33.3 ms"/>
+          <ComboBoxItem Content="1/50 с · 20 ms (50Hz RU/EU)"/>
+          <ComboBoxItem Content="1/60 с · 16.7 ms (60Hz US)"/>
+          <ComboBoxItem Content="1/100 с · 10 ms (студия 50Hz)"/>
+          <ComboBoxItem Content="1/120 с · 8.3 ms (студия 60Hz)"/>
+          <ComboBoxItem Content="1/200 с · 5 ms"/>
+          <ComboBoxItem Content="1/250 с · 4 ms"/>
+          <ComboBoxItem Content="1/500 с · 2 ms"/>
+          <ComboBoxItem Content="1/1000 с · 1 ms"/>
+         </ComboBox></StackPanel>
+         <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Чувствительность (ISO)"/><ComboBox x:Name="IsoChoice">
+          <ComboBoxItem Content="Авто (Auto ISO)"/>
+          <ComboBoxItem Content="ISO 50 · чистый кадр"/>
+          <ComboBoxItem Content="ISO 100 · студия"/>
+          <ComboBoxItem Content="ISO 200 · стандарт"/>
+          <ComboBoxItem Content="ISO 400 · слабое освещение"/>
+          <ComboBoxItem Content="ISO 800 · вечер"/>
+          <ComboBoxItem Content="ISO 1600 · тёмная комната"/>
+          <ComboBoxItem Content="ISO 3200 · экстремальный"/>
+         </ComboBox></StackPanel>
+        </Grid>
+
+        <Grid>
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,4,0"><TextBlock Text="Цветовая t° (Manual WB Kelvin)"/><ComboBox x:Name="WbKelvinChoice">
+          <ComboBoxItem Content="Авто (AWB)"/>
+          <ComboBoxItem Content="2800 K · Тёплый свет ламп"/>
+          <ComboBoxItem Content="3200 K · Студийный галоген"/>
+          <ComboBoxItem Content="4000 K · Нейтральный белый"/>
+          <ComboBoxItem Content="5000 K · Прямой солнечный"/>
+          <ComboBoxItem Content="5600 K · Студийный Daylight"/>
+          <ComboBoxItem Content="6500 K · Облачный дневной"/>
+          <ComboBoxItem Content="7500 K · Тень / холодный"/>
+         </ComboBox></StackPanel>
+         <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Экспозиция · шаги"/><TextBox x:Name="Exposure"/></StackPanel>
+        </Grid>
+
+        <Grid Margin="0,4,0,6">
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel Margin="0,0,4,0"><TextBlock Text="Баланс белого (Профиль)"/><ComboBox x:Name="WhiteBalance"><ComboBoxItem Content="Авто"/><ComboBoxItem Content="Дневной"/><ComboBoxItem Content="Облачно"/><ComboBoxItem Content="Лампа накаливания"/><ComboBoxItem Content="Люминесцентный"/></ComboBox></StackPanel>
+         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,18,0,0">
+          <CheckBox x:Name="LockAeAwb" Content="🔒 Зафиксировать AE/AWB" ToolTip="Блокирует автоэкспозицию и баланс белого на текущих значениях, устраняя мерцание"/>
+         </StackPanel>
+        </Grid>
+
+        <!-- 📄 Автокалибровка баланса белого по белому листу бумаги -->
+        <Border Background="#0C1524" CornerRadius="8" Padding="10" Margin="0,0,0,8">
+         <StackPanel>
+          <DockPanel Margin="0,0,0,4">
+           <TextBlock Text="📄 Автокалибровка ББ по белому листу" FontSize="12.5" FontWeight="SemiBold" Foreground="#42D8B2" VerticalAlignment="Center"/>
+           <TextBlock x:Name="WbStatusBadge" Text="AWB Auto" Foreground="#8498B4" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+          </DockPanel>
+          <TextBlock Text="Поднесите лист белой бумаги в центр кадра и нажмите кнопку для устранения желтизны или синевы." Foreground="#8498B4" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"/>
+          <Grid>
+           <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+           </Grid.ColumnDefinitions>
+           <Button x:Name="CalibrateWbButton" Content="🎯 Калибровать ББ по листу бумаги" Click="CalibrateWb_Click" Padding="12,6" Background="#142638" Foreground="#42D8B2" FontWeight="SemiBold" FontSize="11.5" ToolTip="Анализирует белый лист в центре кадра, вычисляет цветовую температуру и фиксирует нейтральный баланс белого"/>
+           <Button Grid.Column="1" x:Name="ResetWbButton" Content="↺ Сброс" Click="ResetWb_Click" Margin="6,0,0,0" Padding="10,6" Background="#1C2E42" Foreground="#8498B4" FontSize="11" ToolTip="Сбросить баланс белого на авто (AWB)"/>
+          </Grid>
+          <TextBlock x:Name="WbCalibrationDetails" Text="" Foreground="#70E5C3" FontSize="10.5" TextWrapping="Wrap" Margin="0,4,0,0" Visibility="Collapsed"/>
+         </StackPanel>
+        </Border>
+
+        <Border Background="#0C1524" CornerRadius="8" Padding="12" Margin="0,6,0,8">
+         <StackPanel>
+          <DockPanel Margin="0,0,0,6">
+           <CheckBox x:Name="Stabilization" Content="🎯 Стабилизация сенсора (OIS / EIS)" FontWeight="SemiBold" Foreground="#42D8B2" VerticalAlignment="Center" ToolTip="Аппаратная оптическая (OIS) и электронная гиро-стабилизация (EIS). Гасит вибрации штатива, стола и мыши без задержки."/>
+           <TextBlock Text="Зависит от камеры" Foreground="#70E5C3" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+          </DockPanel>
+          <Grid Margin="0,4,0,0">
+           <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+           <StackPanel Margin="0,0,4,0">
+            <TextBlock Text="Сила стабилизации" FontSize="11.5" Foreground="#8498B4"/>
+            <ComboBox x:Name="StabilizationModeChoice" SelectionChanged="StabilizationMode_Changed">
+             <ComboBoxItem Content="Обычная · 100% угол обзора (OIS/EIS)"/>
+             <ComboBoxItem Content="🚀 Super Steady · усиленная от мыши"/>
+            </ComboBox>
+           </StackPanel>
+           <StackPanel Grid.Column="1" Margin="4,0,0,0" VerticalAlignment="Center">
+            <TextBlock Text="Super Steady использует 8% анти-вибрационный буфер матрицы для поглощения сильной раскачки штатива." Foreground="#8498B4" FontSize="11" TextWrapping="Wrap"/>
+           </StackPanel>
+          </Grid>
+         </StackPanel>
+        </Border>
+       </StackPanel>
+      </ScrollViewer>
+     </TabItem>
+
+     <!-- Вкладка 3: 🤖 Автокадр (NVIDIA Broadcast AI) -->
+     <TabItem Header="🤖 Автокадр">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4,12,8,0">
+       <StackPanel>
+        <TextBlock Text="Интеллектуальное слежение за стримером" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,4"/>
+        <TextBlock Text="Аналог NVIDIA Broadcast Auto-Framing: камера плавно и кинематографично удерживает вас по центру кадра с естественным зумом и без дерганий." Foreground="#8498B4" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+        <Border Background="#0C1524" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+         <StackPanel>
+          <CheckBox x:Name="FaceTracking" Content="👤 Приоритетный автофокус и замер по лицу (Face Priority AF)" ToolTip="Аппаратное отслеживание лица: непрерывный автофокус и экспозамер на лице" Margin="0,0,0,8"/>
+          <CheckBox x:Name="AutoFraming" Content="🤖 Авто-кадрирование лица (Auto-Framing / Center Stage)" ToolTip="Плавное отслеживание лица в кадре (Pan &amp; Smooth Zoom): стример всегда удерживается по центру" Margin="0,0,0,0"/>
+         </StackPanel>
+        </Border>
+
+        <!-- Ползунки параметров слежения в стиле NVIDIA Broadcast -->
+        <TextBlock Text="Настройки кадрирования" FontSize="14" FontWeight="SemiBold" Margin="0,4,0,8"/>
+
+        <Border Background="#0C1524" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+         <StackPanel>
+          <!-- Масштаб (Zoom) -->
+          <DockPanel Margin="0,0,0,2">
+           <TextBlock Text="Масштаб кадрирования (Framing Zoom)" FontSize="12" FontWeight="SemiBold"/>
+           <TextBlock x:Name="AutoFramingZoomText" Text="1.35x · Поясной план" Foreground="#42D8B2" FontSize="11.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+          </DockPanel>
+          <Slider x:Name="AutoFramingZoomSlider" Minimum="1.05" Maximum="2.50" Value="1.35" SmallChange="0.05" LargeChange="0.1" ValueChanged="AutoFramingSliders_ValueChanged" Margin="0,2,0,2"/>
+          <TextBlock Text="1.05x — общий план комнаты · 1.35x — средний поясной · 2.0x+ — крупный план" Foreground="#687C98" FontSize="10.5" Margin="0,0,0,10"/>
+
+          <!-- Скорость (Tracking Speed) -->
+          <DockPanel Margin="0,0,0,2">
+           <TextBlock Text="Скорость слежения (Tracking Speed)" FontSize="12" FontWeight="SemiBold"/>
+           <TextBlock x:Name="AutoFramingSpeedText" Text="1.0x · Сбалансированная" Foreground="#42D8B2" FontSize="11.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+          </DockPanel>
+          <Slider x:Name="AutoFramingSpeedSlider" Minimum="0.2" Maximum="3.0" Value="1.0" SmallChange="0.1" LargeChange="0.2" ValueChanged="AutoFramingSliders_ValueChanged" Margin="0,2,0,2"/>
+          <TextBlock Text="0.5x — кинематографичный мягкий ход · 1.0x — оптимум · 2.0x+ — активное слежение" Foreground="#687C98" FontSize="10.5" Margin="0,0,0,10"/>
+
+          <!-- Мертвая зона (Deadzone) -->
+          <DockPanel Margin="0,0,0,2">
+           <TextBlock Text="Мертвая зона стабилизации (Deadzone)" FontSize="12" FontWeight="SemiBold"/>
+           <TextBlock x:Name="AutoFramingDeadzoneText" Text="5% · Игнорировать покачивания" Foreground="#42D8B2" FontSize="11.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+          </DockPanel>
+          <Slider x:Name="AutoFramingDeadzoneSlider" Minimum="0.01" Maximum="0.20" Value="0.05" SmallChange="0.01" LargeChange="0.02" ValueChanged="AutoFramingSliders_ValueChanged" Margin="0,2,0,2"/>
+          <TextBlock Text="Допуск движения в центре, исключающий дрожание от дыхания и мелких движений головы" Foreground="#687C98" FontSize="10.5"/>
+         </StackPanel>
+        </Border>
+
+        <!-- Готовые пресеты в 1 клик -->
+        <TextBlock Text="Быстрые пресеты в 1 клик" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
+        <UniformGrid Columns="3" Margin="0,0,0,10">
+         <Button x:Name="PresetCinemaButton" Content="🎬 Кино (Плавный)" Click="PresetCinema_Click" Padding="6,8" Margin="0,0,4,0" Background="#162537" Foreground="#70E5C3" FontSize="11"/>
+         <Button x:Name="PresetBalancedButton" Content="⚖️ Баланс" Click="PresetBalanced_Click" Padding="6,8" Margin="2,0,2,0" Background="#162537" Foreground="#70E5C3" FontSize="11"/>
+         <Button x:Name="PresetDynamicButton" Content="⚡ Динамичный" Click="PresetDynamic_Click" Padding="6,8" Margin="4,0,0,0" Background="#162537" Foreground="#70E5C3" FontSize="11"/>
+        </UniformGrid>
+        <TextBlock Text="• Кино: плавный зум 1.25x, замедленное панорамирование для подкастов и бесед&#10;• Баланс: стандарт NVIDIA Broadcast (1.35x, средняя скорость)&#10;• Динамичный: 1.55x крупнее план, быстрый отклик для активных стримов" Foreground="#687C98" FontSize="11" TextWrapping="Wrap"/>
+       </StackPanel>
+      </ScrollViewer>
+     </TabItem>
+
+     <!-- Вкладка 4: 🎨 Цвет -->
+     <TabItem Header="🎨 Цвет">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4,12,8,0">
+       <StackPanel>
+        <TextBlock Text="Ориентация и цветокоррекция" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Формат и ориентация кадра" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4"/>
+        <ComboBox x:Name="OrientationModeChoice" Margin="0,0,0,8" SelectionChanged="OrientationModeChoice_SelectionChanged">
+         <ComboBoxItem Content="🖥️ 16:9 · Альбомная (YouTube, Twitch, Discord, OBS)"/>
+         <ComboBoxItem Content="📱 9:16 Crop · Вертикальная (Shorts, Reels, TikTok)"/>
+         <ComboBoxItem Content="🤖 9:16 Auto-Framing · Вертикальная со слежением за лицом"/>
+         <ComboBoxItem Content="🔲 9:16 Fit · Вписать 16:9 в вертикаль 9:16"/>
+        </ComboBox>
+
+        <Grid Margin="0,0,0,8">
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <CheckBox x:Name="FlipHorizontal" Content="Зеркало (Flip X)" VerticalAlignment="Center"/>
+         <StackPanel Grid.Column="1"><TextBlock Text="Поворот кадра"/><ComboBox x:Name="RotationChoice">
+          <ComboBoxItem Content="0° · стандартная"/>
+          <ComboBoxItem Content="90° · вправо (портрет)"/>
+          <ComboBoxItem Content="180° · вверх ногами"/>
+          <ComboBoxItem Content="270° · влево (портрет)"/>
+         </ComboBox></StackPanel>
+        </Grid>
+
+        <TextBlock Text="Точная цветокоррекция" FontSize="14" FontWeight="SemiBold" Margin="0,6,0,8"/>
+        <Border Background="#0C1524" CornerRadius="8" Padding="12" Margin="0,0,0,10">
+         <StackPanel>
+          <DockPanel Margin="0,0,0,2">
+           <TextBlock Text="Яркость" FontSize="12"/>
+           <TextBlock x:Name="BrightnessValueText" Text="0.00" Foreground="#42D8B2" FontSize="11.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+          </DockPanel>
+          <Slider x:Name="BrightnessSlider" Minimum="-0.5" Maximum="0.5" Value="0" SmallChange="0.05" LargeChange="0.1" ValueChanged="ColorSliders_ValueChanged" Margin="0,2,0,8"/>
+
+          <DockPanel Margin="0,0,0,2">
+           <TextBlock Text="Контраст" FontSize="12"/>
+           <TextBlock x:Name="ContrastValueText" Text="1.00" Foreground="#42D8B2" FontSize="11.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+          </DockPanel>
+          <Slider x:Name="ContrastSlider" Minimum="0.5" Maximum="2.0" Value="1.0" SmallChange="0.05" LargeChange="0.1" ValueChanged="ColorSliders_ValueChanged" Margin="0,2,0,8"/>
+
+          <DockPanel Margin="0,0,0,2">
+           <TextBlock Text="Насыщенность" FontSize="12"/>
+           <TextBlock x:Name="SaturationValueText" Text="1.00" Foreground="#42D8B2" FontSize="11.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+          </DockPanel>
+          <Slider x:Name="SaturationSlider" Minimum="0.0" Maximum="2.0" Value="1.0" SmallChange="0.05" LargeChange="0.1" ValueChanged="ColorSliders_ValueChanged" Margin="0,2,0,8"/>
+
+          <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+           <Button x:Name="ResetColorButton" Content="↺ Сбросить цвет" Click="ResetColor_Click" Padding="12,5" Background="#162537" Foreground="#8498B4" FontSize="11" Margin="0,0,6,0"/>
+           <Button x:Name="ColorTabCalibrateWbButton" Content="📄 Калибровать ББ по листу бумаги" Click="CalibrateWb_Click" Padding="12,5" Background="#142638" Foreground="#42D8B2" FontSize="11"/>
+          </StackPanel>
+         </StackPanel>
+        </Border>
+
+        <TextBlock Text="Цветовой профиль / 3D LUT" FontSize="12" Margin="0,2,0,2"/>
+        <ComboBox x:Name="ColorProfileChoice" Margin="0,0,0,10">
+         <ComboBoxItem Content="Оригинал · без стилизации"/>
+         <ComboBoxItem Content="Чистый студийный · Clean Neutral"/>
+         <ComboBoxItem Content="Тёплый стрим · Warm Streamer"/>
+         <ComboBoxItem Content="Кино · Cinematic Teal &amp; Orange"/>
+         <ComboBoxItem Content="Холодный хай-тек · Cold Studio"/>
+         <ComboBoxItem Content="Нуар ч/б · Monochrome Noir"/>
+        </ComboBox>
+
+        <TextBlock Text="Студийные эффекты фона (AI / Preview / OBS)" FontSize="14" FontWeight="SemiBold" Margin="0,6,0,6"/>
+        <ComboBox x:Name="BackgroundEffectChoice" Margin="0,0,0,8" SelectionChanged="BackgroundEffectChoice_SelectionChanged">
+         <ComboBoxItem Content="Без эффекта · стандартный фон"/>
+         <ComboBoxItem Content="🧠 AI Портретное Боке (RTX 4070 Ti DirectML)"/>
+         <ComboBoxItem Content="🧠 AI Зелёный экран (Chroma Key)"/>
+         <ComboBoxItem Content="🧠 AI Прозрачный фон (OBS Spout2 Alpha)"/>
+         <ComboBoxItem Content="🧠 AI Своя картинка (Custom Wallpaper)"/>
+         <ComboBoxItem Content="🧠 AI Студийный свет (Studio Spotlight)"/>
+         <ComboBoxItem Content="🪄 Классическое Боке (эллипс)"/>
+         <ComboBoxItem Content="💡 Классическое затемнение (эллипс)"/>
+         <ComboBoxItem Content="🟩 Классический зелёный экран (эллипс)"/>
+         <ComboBoxItem Content="⬛ Тёмная студия (Studio Slate)"/>
+        </ComboBox>
+
+        <!-- Панель выбора своего фона -->
+        <Border x:Name="CustomBgPanel" Background="#0C1524" CornerRadius="6" Padding="8" Margin="0,0,0,8" Visibility="Collapsed">
+         <StackPanel>
+          <TextBlock Text="🖼️ Изображение для AI фона (PNG, JPG, BMP):" FontSize="11.5" Foreground="#8498B4" Margin="0,0,0,4"/>
+          <Grid>
+           <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+           </Grid.ColumnDefinitions>
+           <TextBox x:Name="CustomBgPathBox" FontSize="11" VerticalContentAlignment="Center" Margin="0,0,6,0"/>
+           <Button Grid.Column="1" Content="📁 Обзор..." Click="BrowseCustomBg_Click" Padding="10,4" Background="#162537" Foreground="#42D8B2" FontSize="11"/>
+          </Grid>
+         </StackPanel>
+        </Border>
+
+        <!-- Настройки AI сегментации и студии -->
+        <Border Background="#0C1524" CornerRadius="8" Padding="10" Margin="0,0,0,10">
+         <StackPanel>
+          <DockPanel Margin="0,0,0,6">
+           <CheckBox x:Name="AiSegmentationCheck" Content="🧠 Аппаратный AI (DirectML · RTX 4070 Ti)" IsChecked="True" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#42D8B2"/>
+           <TextBlock Text="&lt; 2 ms" Foreground="#00FFB2" FontSize="11" FontWeight="Bold" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+          </DockPanel>
+          <Grid Margin="0,0,0,4">
+           <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+           <CheckBox x:Name="SkinSmoothing" Content="✨ Смягчение кожи (Beauty Filter)" VerticalAlignment="Center"/>
+           <StackPanel Grid.Column="1" Orientation="Horizontal">
+            <TextBlock Text="Сила боке: " VerticalAlignment="Center" Foreground="#8498B4" FontSize="11.5"/>
+            <TextBox x:Name="BlurStrength" Width="38" Text="15"/>
+           </StackPanel>
+          </Grid>
+          <DockPanel Margin="0,4,0,2">
+           <TextBlock Text="Мягкость краёв силуэта (Feather):" FontSize="11.5" Foreground="#8498B4" VerticalAlignment="Center"/>
+           <TextBlock x:Name="AiFeatherText" Text="15%" Foreground="#42D8B2" FontSize="11.5" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+          </DockPanel>
+          <Slider x:Name="AiFeatherSlider" Minimum="0.05" Maximum="0.40" Value="0.15" SmallChange="0.01" LargeChange="0.05" ValueChanged="AiFeatherSlider_ValueChanged"/>
+         </StackPanel>
+        </Border>
+       </StackPanel>
+      </ScrollViewer>
+     </TabItem>
+
+     <!-- Вкладка 5: 🛡️ Защита -->
+     <TabItem Header="🛡️ Защита">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4,12,8,0">
+       <StackPanel>
+        <TextBlock Text="Аппаратная защита и термоконтроль" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+        <CheckBox x:Name="BatteryProtect" Content="Запрашивать лимит зарядки Samsung (USB)" ToolTip="Отправляет protect_battery прошивке Samsung. Наличие и уровень ограничения зависят от устройства; приложение не подтверждает остановку зарядки." Margin="0,0,0,6"/>
+
+        <Grid Margin="0,2,0,8">
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+         <CheckBox x:Name="ThermalGuardCheck" Content="Умная термозащита CPU (Smart Guard)" VerticalAlignment="Center"/>
+         <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <TextBlock Text="Лимит °C: " VerticalAlignment="Center" Foreground="#8498B4" FontSize="11.5"/>
+          <TextBox x:Name="ThermalThreshold" Width="45" Text="52"/>
+         </StackPanel>
+        </Grid>
+
+        <TextBlock Text="Профиль энергопотребления (Power mode)" Margin="0,4,0,2"/>
+        <ComboBox x:Name="PowerMode" SelectionChanged="PowerMode_Changed">
+         <ComboBoxItem Content="Maximum Quality"/>
+         <ComboBoxItem Content="Balanced · по умолчанию"/>
+         <ComboBoxItem Content="Power Saving · явный профиль 30 FPS / 12 Mbps"/>
+        </ComboBox>
+        <TextBlock x:Name="PowerModeHint" Text="Balanced сохраняет выбранные разрешение, FPS и битрейт." Foreground="#8498B4" FontSize="11.5" TextWrapping="Wrap" Margin="0,-2,0,10"/>
+
+        <TextBlock Text="Интеграция с системой" FontSize="14" FontWeight="SemiBold" Margin="0,6,0,6"/>
+        <CheckBox x:Name="MinimizeToTray" Content="🔕 Сворачивать в системный трей при закрытии [X]" ToolTip="Сворачивать программу в трей (рядом с часами) вместо полного выхода при нажатии на крестик" Margin="0,0,0,6"/>
+        <CheckBox x:Name="RunOnStartup" Content="🚀 Запускать вместе с Windows (в трей)" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Оптимизация Wi-Fi сети" FontSize="14" FontWeight="SemiBold" Margin="0,6,0,6"/>
+        <TextBlock Text="Ограничение битрейта по Wi-Fi"/>
+        <ComboBox x:Name="WifiLimit" Margin="0,0,0,6">
+         <ComboBoxItem Content="Без ограничения · использовать выбранный битрейт"/>
+         <ComboBoxItem Content="12 Mbps · для слабого роутера"/>
+         <ComboBoxItem Content="20 Mbps · баланс"/>
+         <ComboBoxItem Content="32 Mbps · высокое качество"/>
+        </ComboBox>
+        <CheckBox x:Name="AdaptiveBitrate" Content="Адаптивный Wi-Fi битрейт · авто-восстановление потерь" Margin="0,0,0,4"/>
+        <TextBlock Text="Минимум адаптации · Mbps"/><TextBox x:Name="MinimumWifiBitrate" Margin="0,0,0,6"/>
+        <TextBlock Text="USB всегда использует выбранный битрейт полностью. Допустимый диапазон: 1–80 Mbps." Foreground="#8498B4" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+        <Expander Header="Инструменты и дополнительные порты" Foreground="#BFCDE0" Margin="0,6,0,6">
+         <StackPanel Margin="0,10,0,0">
+          <TextBlock Text="Пустой путь = автоматический поиск" Foreground="#8498B4" Margin="0,0,0,8"/>
+          <TextBlock Text="adb.exe"/><DockPanel><Button Content="…" DockPanel.Dock="Right" Tag="AdbPath" Click="Browse_Click"/><TextBox x:Name="AdbPath"/></DockPanel>
+          <TextBlock Text="ffmpeg.exe"/><DockPanel><Button Content="…" DockPanel.Dock="Right" Tag="FfmpegPath" Click="Browse_Click"/><TextBox x:Name="FfmpegPath"/></DockPanel>
+          <TextBlock Text="ffplay.exe"/><DockPanel><Button Content="…" DockPanel.Dock="Right" Tag="FfplayPath" Click="Browse_Click"/><TextBox x:Name="FfplayPath"/></DockPanel>
+          <TextBlock Text="obs64.exe"/><DockPanel><Button Content="…" DockPanel.Dock="Right" Tag="ObsPath" Click="Browse_Click"/><TextBox x:Name="ObsPath"/></DockPanel>
+          <TextBlock Text="Preview UDP порт"/><TextBox x:Name="PreviewPort"/>
+          <CheckBox x:Name="ForceSamsungLegacy" Content="Принудительный Samsung 60 FPS backend (для Exynos)" Foreground="#8498B4" Margin="0,8,0,0"/>
+         </StackPanel>
+        </Expander>
+       </StackPanel>
+      </ScrollViewer>
+     </TabItem>
+
+    </TabControl>
+    </Grid>
+   </Border>
+
+   <!-- Правая колонка: Информационная панель, Превью и Журнал -->
+   <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><Grid>
+    <Grid.RowDefinitions>
+     <RowDefinition Height="Auto"/>
+     <RowDefinition Height="Auto"/>
+     <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <!-- Карточка 1: Видеопоток и живое превью -->
+    <Border Background="{StaticResource PanelBrush}" CornerRadius="14" Padding="20" Margin="0,0,0,14">
+     <StackPanel>
+      <TextBlock Text="Поток" FontSize="20" FontWeight="SemiBold"/>
+      <TextBlock x:Name="StateText" Text="Остановлено" Foreground="#70E5C3" Margin="0,8,0,12" TextWrapping="Wrap"/>
+      <UniformGrid Columns="2">
+       <StackPanel Margin="0,0,0,12"><TextBlock Text="ПОЛУЧЕНО" Foreground="#8498B4" FontSize="11"/><TextBlock x:Name="RateText" Text="0.00 Mbps" FontSize="26"/></StackPanel>
+       <StackPanel Margin="0,0,0,12"><TextBlock Text="ФАКТ / ЗАПРОС" Foreground="#8498B4" FontSize="11"/><TextBlock x:Name="FpsText" Text="— / 30 fps" FontSize="26"/></StackPanel>
+      </UniformGrid>
+      <TextBlock x:Name="TechnicalText" Text="Подключение —  ·  Камера —&#10;FFmpeg остановлен  ·  00:00:00" LineHeight="22" TextWrapping="Wrap"/>
+
+      <!-- Живой интерактивный предпросмотр прямо в окне -->
+      <Border x:Name="PreviewContainer" Background="#060B12" BorderBrush="#1C2E42" BorderThickness="1" CornerRadius="8" Height="250" Margin="0,10,0,4" ClipToBounds="True" MouseWheel="VideoPreview_MouseWheel">
+       <Grid MouseWheel="VideoPreview_MouseWheel">
+        <!-- Кадр видеопотока -->
+        <Image x:Name="LivePreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="LowQuality" MouseDown="VideoPreview_MouseDown" MouseWheel="VideoPreview_MouseWheel" Cursor="Cross"/>
+
+        <!-- Заглушка до запуска -->
+        <Grid x:Name="PreviewPlaceholder" VerticalAlignment="Center" HorizontalAlignment="Center" IsHitTestVisible="False">
+         <StackPanel HorizontalAlignment="Center">
+          <TextBlock Text="📹" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,6" Opacity="0.4"/>
+          <TextBlock Text="Предпросмотр камеры появится при запуске потока" Foreground="#8498B4" FontSize="12" HorizontalAlignment="Center"/>
+          <TextBlock Text="🎯 Кликните прямо по объекту на видео для фокусировки" Foreground="#42D8B2" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+         </StackPanel>
+        </Grid>
+
+        <!-- Слой анимации прицела автофокуса (Canvas) -->
+        <Canvas x:Name="FocusCanvas" ClipToBounds="True" IsHitTestVisible="False"/>
+
+        <!-- Слой направляющих сетки композиции (Rule of Thirds) -->
+        <Canvas x:Name="GridCanvas" ClipToBounds="True" IsHitTestVisible="False" Visibility="Collapsed" SizeChanged="GridCanvas_SizeChanged"/>
+
+        <!-- Слой рамки лица и зоны кропа авто-фрейминга (NVIDIA Broadcast style) -->
+        <Canvas x:Name="FaceCanvas" ClipToBounds="True" IsHitTestVisible="False"/>
+
+        <!-- Индикатор зоны калибровки баланса белого по белому листу бумаги -->
+        <Border x:Name="WbTargetBox" Width="120" Height="90" BorderBrush="#00FFB2" BorderThickness="1.5" CornerRadius="6" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False">
+         <Border.Effect>
+          <DropShadowEffect Color="#00FFB2" BlurRadius="10" ShadowDepth="0" Opacity="0.7"/>
+         </Border.Effect>
+         <TextBlock x:Name="WbTargetBoxText" Text="🎯 Белый лист" Foreground="#00FFB2" FontSize="9.5" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,2" Background="#D9090F1A" Padding="4,1"/>
+        </Border>
+
+        <!-- Вспышка затвора при создании снимка -->
+        <Border x:Name="CameraFlashOverlay" Background="White" Opacity="0" IsHitTestVisible="False" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+
+        <!-- Нижняя подсказка -->
+        <Border VerticalAlignment="Bottom" Background="#B3090F1A" Padding="6,3" IsHitTestVisible="False">
+         <TextBlock Text="🎯 Клик: фокус  ·  Колёсико: зум  ·  Ср. клик / 2x: 1.0x" Foreground="#42D8B2" FontSize="10" HorizontalAlignment="Center"/>
+        </Border>
+       </Grid>
+      </Border>
+
+      <Expander Header="Инструменты кадра" Foreground="#BFCDE0" Margin="0,6,0,0">        <!-- Панель управления поверх видео: бейдж и кнопки -->
+        <WrapPanel Margin="0,6,0,6">
+         <WrapPanel>
+          <Border x:Name="ResolutionBadgeBorder" Visibility="Collapsed" Background="#D9090F1A" CornerRadius="4" Padding="6,2" Margin="0,0,4,0">
+           <TextBlock x:Name="PreviewResolutionBadge" Text="1920×1080" Foreground="#70E5C3" FontSize="10" FontWeight="SemiBold"/>
+          </Border>
+          <Border x:Name="RecBadgeBorder" Visibility="Collapsed" Background="#D9E02424" CornerRadius="4" Padding="6,2">
+           <TextBlock x:Name="RecBadgeText" Text="🔴 REC 00:00" Foreground="White" FontSize="10" FontWeight="Bold"/>
+          </Border>
+         </WrapPanel>
+         <WrapPanel>
+          <Button x:Name="SnapshotButton" Content="📸 СНИМОК" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="Snapshot_Click" Background="#1C2E42" Foreground="#70E5C3" ToolTip="Моментальный 4K/UHD снимок в папку Изображения/H3HCam (F9 / Ctrl+S)"/>
+          <Button x:Name="RecordButton" Content="🔴 ЗАПИСЬ" Padding="7,5" FontSize="11" Margin="0,0,5,0" Click="Record_Click" Background="#2A141A" Foreground="#FF6B8B" ToolTip="Локальная запись прямого MP4-потока без нагрузки на процессор (F10 / Ctrl+R)"/>
+          <Button x:Name="LensWideButton" Content="0.6x" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="LensWide_Click" Background="#1C2E42" Foreground="#70E5C3" ToolTip="Быстрое переключение на ультраширокоугольный объектив (0.6x UltraWide) на лету"/>
+          <Button x:Name="LensMainButton" Content="1.0x" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="LensMain_Click" Background="#1C2E42" Foreground="#70E5C3" ToolTip="Быстрое переключение на основной объектив (1.0x Main) на лету"/>
+          <Button x:Name="LensTeleButton" Content="2.0x" Padding="7,5" FontSize="11" Margin="0,0,5,0" Click="LensTele_Click" Background="#1C2E42" Foreground="#70E5C3" ToolTip="Быстрое переключение на телеобъектив (2.0x / 3.0x Telephoto) на лету"/>
+          <Button x:Name="GridButton" Content="📐 GRID" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="Grid_Click" Background="#152435" Foreground="#8498B4" ToolTip="Направляющие сетки композиции: линии третей (Rule of Thirds), уровень глаз и рамка 9:16 Shorts"/>
+          <Button x:Name="PeakButton" Content="🔍 PEAK" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="Peak_Click" Background="#152435" Foreground="#8498B4" ToolTip="Focus Peaking: подсветка контуров резкости для ручной фокусировки"/>
+          <Button x:Name="ZebraButton" Content="🦓 ZEBRA" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="Zebra_Click" Background="#152435" Foreground="#8498B4" ToolTip="Zebra Pattern: индикатор зон пересвета (&gt;95% яркости)"/>
+          <Button x:Name="AutoFramingButton" Content="🤖 CENTER" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="AutoFraming_Click" Background="#152435" Foreground="#8498B4" ToolTip="Включение / выключение авто-кадрирования Center Stage (плавное следование за лицом)"/>
+          <Button x:Name="FaceTrackingButton" Content="👤 FACE" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="FaceTracking_Click" Background="#152435" Foreground="#8498B4" ToolTip="Включение / выключение аппаратного отслеживания лиц (Face Priority AF)"/>
+          <Button x:Name="FaceOverlayButton" Content="🎯 BOX" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="FaceOverlay_Click" Background="#152435" Foreground="#70E5C3" ToolTip="Визуализация рамки лица и зоны авто-фрейминга (NVIDIA Broadcast style)"/>
+          <Button x:Name="LockAeAwbButton" Content="🔓 AE/AWB" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="LockAeAwb_Click" Background="#152435" Foreground="#8498B4" ToolTip="Быстрая фиксация/разблокировка автоэкспозиции и баланса белого"/>
+          <Button x:Name="QuickWbButton" Content="📄 WB" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="CalibrateWb_Click" Background="#152435" Foreground="#8498B4" ToolTip="Быстрая калибровка баланса белого по листу бумаги"/>
+          <Button x:Name="PopoutPreviewButton" Content="⛶ ОКНО" Padding="7,5" FontSize="11" Margin="0,0,2,0" Click="PopoutPreview_Click" Background="#1C2E42" Foreground="#E7F0FF" ToolTip="Открыть предпросмотр в отдельном окне с фокусировкой"/>
+          <Button x:Name="FfplayButton" Content="ffplay" Padding="7,5" FontSize="11" Click="Ffplay_Click" Background="#152435" Foreground="#8498B4" ToolTip="Запустить внешний плеер ffplay"/>
+         </WrapPanel>
+        </WrapPanel>
+
+</Expander>
+      <TextBlock x:Name="DetailText" Foreground="#8498B4" FontSize="11.5" Margin="0,6,0,0" TextWrapping="Wrap"/>
+     </StackPanel>
+    </Border>
+
+    <!-- Карточка 2: Телеметрия батареи и график -->
+    <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="14" Padding="16" Margin="0,0,0,14">
+     <StackPanel>
+      <DockPanel><TextBlock Text="Питание телефона" FontSize="17" FontWeight="SemiBold"/><TextBlock x:Name="PowerSourceText" Text="N/A" Foreground="#8498B4" HorizontalAlignment="Right"/></DockPanel>
+      <TextBlock x:Name="PowerHeadlineText" Text="N/A  •  N/A" FontSize="21" Foreground="#70E5C3" Margin="0,6,0,2"/>
+      <TextBlock x:Name="PowerQuickText" Text="Battery voltage N/A  ·  Current N/A  ·  Power N/A  ·  Temperature N/A" Foreground="#BFCDE0" FontSize="12.5" TextWrapping="Wrap"/>
+      <TextBlock x:Name="PowerWarningText" Text="Оценка появится после запуска" Foreground="#E6B85C" FontSize="11.5" Margin="0,5,0,0" TextWrapping="Wrap"/>
+      <Canvas x:Name="PowerChart" Height="45" Margin="0,6,0,0" ClipToBounds="True" SizeChanged="PowerChart_SizeChanged" Background="#0C1421"/>
+      <TextBlock Text="Зелёный: заряд  ·  Красный: °C  ·  Голубой: ток  ·  Жёлтый: мощность · последние 60 минут" Foreground="#687C98" FontSize="10" Margin="0,3,0,0"/>
+      <Expander Header="Подробные данные батареи" Foreground="#BFCDE0" Margin="0,4,0,0">
+       <TextBlock x:Name="PowerDetailsText" Text="N/A" FontFamily="Consolas" FontSize="11" LineHeight="17" Margin="0,6,0,0"/>
+      </Expander>
+     </StackPanel>
+    </Border>
+
+    <!-- Карточка 3: Журнал событий -->
+    <Border MinHeight="180" Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="14" Padding="18">
+     <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <DockPanel Margin="0,0,0,10">
+       <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+        <Button Content="📋 ОТЧЁТ" Padding="8,4" Margin="0,0,4,0" Click="CopyDiagnostics_Click" FontSize="10.5" ToolTip="Скопировать структурированный отчёт о системе, камере, соединении и AI в буфер обмена"/>
+        <Button Content="📁 ЛОГИ" Padding="8,4" Margin="0,0,4,0" Click="OpenLogsFolder_Click" FontSize="10.5" ToolTip="Открыть папку с ежедневными логами %LocalAppData%\H3HCam\logs"/>
+        <Button Content="⚠️ ОШИБКИ" Padding="8,4" Margin="0,0,4,0" Click="CopyLastErrors_Click" FontSize="10.5" ToolTip="Скопировать последние ошибки из лога"/>
+        <Button Content="📦 ZIP" Padding="8,4" Margin="0,0,4,0" Click="ExportDiagnostics_Click" FontSize="10.5" ToolTip="Экспорт полного архива диагностики (.zip)"/>
+        <Button Content="🧹 ОЧИСТИТЬ" Padding="8,4" Click="ClearLog_Click" FontSize="10.5"/>
+       </StackPanel>
+       <TextBlock Text="Журнал" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      </DockPanel>
+      <TextBox x:Name="LogBox" Grid.Row="1" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11.5" BorderThickness="0" Margin="0" Background="#0C1421"/>
+     </Grid>
+    </Border>
+   </Grid></ScrollViewer>
+  </Grid>
+
+  <!-- Нижняя панель действий -->
+  <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,18,0,0">
+   <Button x:Name="StartButton" Content="▶  СТАРТ" Background="#1CA989" Foreground="#041C16" FontWeight="Bold" Width="135" Click="Start_Click"/>
+   <Button x:Name="ApplyButton" Content="↻  ПРИМЕНИТЬ" Width="145" IsEnabled="False" Click="Apply_Click"/>
+   <Button x:Name="StopButton" Content="■  СТОП" Width="110" IsEnabled="False" Click="Stop_Click"/>
+   <Button x:Name="PrivacyMuteButton" Content="🔒 MUTE" Width="95" ToolTip="Приостановить передачу новых кадров на всех выходах. Получатели могут удерживать последний кадр." Click="PrivacyMute_Click"/>
+   <Button x:Name="StreamHudButton" Content="📊 STREAM HUD" Click="ToggleHud_Click" Padding="12,8" Margin="0,0,6,0" Background="#152435" Foreground="#70E5C3" ToolTip="Открыть плавающий полупрозрачный оверлей с живыми метриками (FPS, битрейт, задержка, батарея)"/>
+   <Button x:Name="TestButton" Content="ПОЛНАЯ ПРОВЕРКА" Click="Test_Click"/>
+    <Button Content="USB · 60 FPS" Click="Usb60_Click" Visibility="{Binding Visibility, ElementName=ProPresetBar}"/>
+    <Button Content="ТЕСТ ЗАДЕРЖКИ" Click="LatencyTest_Click" Visibility="{Binding Visibility, ElementName=ProPresetBar}"/>
+   <Button Content="Открыть OBS" Click="Obs_Click"/>
+  </WrapPanel>
+
+  <!-- Модальное окно сохранения пресета -->
+  <Grid x:Name="SavePresetModal" Grid.Row="0" Grid.RowSpan="4" Margin="-24" Background="#D8050B14" Visibility="Collapsed" Panel.ZIndex="1000">
+   <Border Width="450" HorizontalAlignment="Center" VerticalAlignment="Center" Background="#0C1524" BorderBrush="#00d2ff" BorderThickness="1.5" CornerRadius="12" Padding="22">
+    <StackPanel>
+     <TextBlock Text="💾 Сохранение пресета" FontSize="16" FontWeight="Bold" Foreground="#E7F0FF" Margin="0,0,0,8"/>
+     <TextBlock Text="Текущие настройки видео, качества, кодека, эффектов, стабилизации и экспозиции будут сохранены в ваш профиль." FontSize="11.5" Foreground="#8498B4" TextWrapping="Wrap" Margin="0,0,0,16"/>
+     <TextBlock Text="Название пресета:" FontSize="12" FontWeight="SemiBold" Foreground="#70E5C3" Margin="0,0,0,6"/>
+     <TextBox x:Name="PresetNameInput" Text="Мой пресет" Height="34" VerticalContentAlignment="Center" Padding="10,4" Background="#16263B" Foreground="#E7F0FF" BorderBrush="#2D4665" FontSize="13" Margin="0,0,0,18" KeyDown="PresetNameInput_KeyDown"/>
+     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button Content="Отмена" Click="CancelSavePreset_Click" Padding="14,6" Margin="0,0,8,0" Background="#1B2F44" Foreground="#8498B4" FontSize="12"/>
+      <Button Content="💾 Сохранить" Click="ConfirmSavePreset_Click" Padding="14,6" Background="#163A36" Foreground="#70E5C3" FontWeight="Bold" FontSize="12"/>
+     </StackPanel>
+    </StackPanel>
+   </Border>
+  </Grid>
+ </Grid>
+</Window>

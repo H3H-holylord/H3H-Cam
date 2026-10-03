@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <usb-accessory manufacturer="H3H" model="H3H Cam" />
+    <usb-accessory manufacturer="H3H" model="H3H Cam" version="4.0" />
+    <usb-accessory manufacturer="H3H" model="H3H Cam" version="3.0" />
+</resources>

@@ -1,0 +1,4 @@
+storeFile=release.keystore
+storePassword=CHANGE_ME
+keyAlias=h3hcam
+keyPassword=CHANGE_ME

@@ -1,0 +1,92 @@
+<Window x:Class="S8Cam.StreamHudWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="H3H Cam Stream HUD"
+        Width="260" SizeToContent="Height"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
+    <Window.Resources>
+        <Style x:Key="MetricLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Foreground" Value="#8892b0"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style x:Key="MetricValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="#ffffff"/>
+        </Style>
+    </Window.Resources>
+    <Border Background="#EA0b101b" BorderBrush="#00d2ff" BorderThickness="1.2" CornerRadius="10" Margin="6" Padding="10">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="12" ShadowDepth="2" Direction="270" Color="#00d2ff" Opacity="0.3"/>
+        </Border.Effect>
+        <StackPanel>
+            <!-- Header bar with title and close/minimize -->
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse x:Name="LiveDot" Width="8" Height="8" Fill="#00ff66" Margin="0,0,6,0"/>
+                    <TextBlock Text="H3H CAM HUD" FontSize="11" FontWeight="Bold" Foreground="#00d2ff" VerticalAlignment="Center"/>
+                </StackPanel>
+                <Button Grid.Column="1" Content="◐" ToolTip="Прозрачность" Click="ToggleOpacity_Click"
+                        Background="Transparent" Foreground="#8892b0" BorderThickness="0" Cursor="Hand" Padding="4,0" Margin="0,0,4,0"/>
+                <Button Grid.Column="2" Content="✕" ToolTip="Закрыть HUD" Click="CloseHud_Click"
+                        Background="Transparent" Foreground="#ff5370" BorderThickness="0" Cursor="Hand" Padding="4,0"/>
+            </Grid>
+
+            <!-- Primary Metric: FPS & Bitrate -->
+            <Grid Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Border Background="#14213d" CornerRadius="6" Padding="8,5" Margin="0,0,3,0">
+                    <StackPanel>
+                        <TextBlock Text="FPS" Style="{StaticResource MetricLabel}"/>
+                        <TextBlock x:Name="HudFps" Text="0.0" FontSize="18" FontWeight="ExtraBold" Foreground="#00ffcc"/>
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="1" Background="#14213d" CornerRadius="6" Padding="8,5" Margin="3,0,0,0">
+                    <StackPanel>
+                        <TextBlock Text="БИТРЕЙТ" Style="{StaticResource MetricLabel}"/>
+                        <TextBlock x:Name="HudBitrate" Text="0.0 Mbps" FontSize="15" FontWeight="Bold" Foreground="#39ff14" VerticalAlignment="Bottom" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Secondary Metrics: Latency & Battery/Temp -->
+            <Grid Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,4,0">
+                    <TextBlock Text="RTP JITTER" ToolTip="Колебание времени доставки RTP. Не измеряет полную задержку камера–экран." Style="{StaticResource MetricLabel}"/>
+                    <TextBlock x:Name="HudLatency" Text="—" Style="{StaticResource MetricValue}" Foreground="#ffb700"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                    <TextBlock Text="ТЕМП / БАТАРЕЯ" Style="{StaticResource MetricLabel}"/>
+                    <TextBlock x:Name="HudPhone" Text="—" Style="{StaticResource MetricValue}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Output Badge & Dropped frames -->
+            <Border Background="#0d1b2a" CornerRadius="5" Padding="6,4" Margin="0,2,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="HudOutput" Text="SPOUT2 ACTIVE" FontSize="10" FontWeight="Bold" Foreground="#00d2ff" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" x:Name="HudDrops" Text="Drop: 0" FontSize="10" FontWeight="SemiBold" Foreground="#8892b0" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+        </StackPanel>
+    </Border>
+</Window>
