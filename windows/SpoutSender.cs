@@ -215,6 +215,12 @@ float4 PSMain(VSOutput input) : SV_Target {
     private MemoryMappedFile? infoMap;
     private MemoryMappedViewAccessor? infoAccessor;
 
+    [StructLayout(LayoutKind.Sequential)] private struct FrameQueryDesc {public uint Kind,Flags;}
+    private readonly IntPtr[] frameQueries=new IntPtr[2];
+    private int queryHead,pendingQueries;
+    private long publishedFrames,gpuDroppedFrames;
+    public long Frames => Interlocked.Read(ref publishedFrames);
+    public long GpuDroppedFrames => Interlocked.Read(ref gpuDroppedFrames);
     private bool disposed;
 
     public string SenderName => senderName;
@@ -234,6 +240,12 @@ float4 PSMain(VSOutput input) : SV_Target {
 
         try {
             InitializeD3D11();
+            var queryDesc=new FrameQueryDesc(); // D3D11_QUERY_EVENT
+            var deviceVtable=*(IntPtr**)device;
+            for(int i=0;i<frameQueries.Length;i++) {
+                int queryResult=((delegate* unmanaged[Stdcall]<IntPtr,in FrameQueryDesc,out IntPtr,int>)deviceVtable[24])(device,in queryDesc,out frameQueries[i]);
+                if(queryResult<0)Marshal.ThrowExceptionForHR(queryResult);
+            }
             InitializeSuperResolution();
             RegisterInSpoutRegistry();
         } catch {
@@ -434,7 +446,31 @@ float4 PSMain(VSOutput input) : SV_Target {
         }
     }
 
-    private void UploadBgra(byte[] bgra, int srcW, int srcH, float sharpness) {
+    /// <summary>Allow at most two upload/render batches in flight. Prefer the next fresh frame
+    /// over appending work behind a GPU saturated by a game.</summary>
+    public bool TryWriteFrame(byte[] frame,int srcW,int srcH,float sharpness=0.20f) {
+        ObjectDisposedException.ThrowIf(disposed,this);
+        if(frame.Length<checked(srcW*srcH*4))throw new ArgumentException("BGRA frame is incomplete");
+        var ctx=*(IntPtr**)context;
+        while(pendingQueries>0) {
+            int complete=0;
+            int hr=((delegate* unmanaged[Stdcall]<IntPtr,IntPtr,IntPtr,uint,uint,int>)ctx[29])(context,frameQueries[queryHead],(IntPtr)(&complete),4,0);
+            if(hr<0)Marshal.ThrowExceptionForHR(hr);
+            if(hr==1||complete==0)break;
+            queryHead=(queryHead+1)%frameQueries.Length;
+            pendingQueries--;
+        }
+        if(pendingQueries==frameQueries.Length) {Interlocked.Increment(ref gpuDroppedFrames);return false;}
+        UploadBgra(frame,srcW,srcH,sharpness,flush:false);
+        var query=frameQueries[(queryHead+pendingQueries)%frameQueries.Length];
+        ((delegate* unmanaged[Stdcall]<IntPtr,IntPtr,void>)ctx[28])(context,query);
+        ((delegate* unmanaged[Stdcall]<IntPtr,void>)ctx[111])(context);
+        pendingQueries++;
+        Interlocked.Increment(ref publishedFrames);
+        return true;
+    }
+
+    private void UploadBgra(byte[] bgra, int srcW, int srcH, float sharpness, bool flush = true) {
         IntPtr* ctxVtbl = *(IntPtr**)context;
         if (srcW == width && srcH == height) {
             // Native resolution: direct upload to shared texture
@@ -461,8 +497,8 @@ float4 PSMain(VSOutput input) : SV_Target {
         // Method 111 in ID3D11DeviceContextVtbl: Flush
         // CRITICAL FOR SPOUT2: Submits command buffer to GPU immediately so OBS Studio (separate process)
         // receives the frame in real time without waiting for driver buffer timeout or stalling!
-        var flush = (delegate* unmanaged[Stdcall]<IntPtr, void>)ctxVtbl[111];
-        flush(context);
+        var flushCommands = (delegate* unmanaged[Stdcall]<IntPtr, void>)ctxVtbl[111];
+        if(flush) flushCommands(context);
     }
 
     private void EnsureSourceTexture(int srcW, int srcH) {
@@ -609,6 +645,9 @@ float4 PSMain(VSOutput input) : SV_Target {
         if (disposed) return;
         disposed = true;
 
+        for(int i=0;i<frameQueries.Length;i++) {
+            if(frameQueries[i]!=IntPtr.Zero) {Marshal.Release(frameQueries[i]);frameQueries[i]=IntPtr.Zero;}
+        }
         // Clear slot in SpoutSenderNames
         try {
             if (senderNamesAccessor != null && registeredSlot >= 0) {

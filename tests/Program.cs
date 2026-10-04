@@ -191,6 +191,22 @@ internal static class Program {
         if (args.Length == 0) throw new ArgumentException(
             "Commands: unit [folder] | probe <auto|usb|wifi> [serial] | stream <usb|wifi> <folder> [serial] [seconds]");
         switch (args[0]) {
+            case "gpu-queue-test":
+                using(var sender=new SpoutSender("H3HCamGpuQueueTest",1920,1080)) {
+                    var pixels=new byte[1920*1080*4];
+                    for(int frame=0;frame<120;frame++){sender.TryWriteFrame(pixels,1920,1080);await Task.Delay(16);}
+                    Console.WriteLine($"GPU queue: frames={sender.Frames} skipped={sender.GpuDroppedFrames}");
+                    Assert(sender.Frames>80,"GPU queue publishes without stalling");
+                }
+                return;
+            case "stress-test":
+                await CameraStressTest.Run(args[1],int.Parse(args[2]),args.Length>3?int.Parse(args[3]):0);return;
+            case "watchdog-test":
+                await CameraStressTest.Watchdog();return;
+            case "cpu-load":
+                StressLoad.Cpu(int.Parse(args[1]),double.Parse(args[2],System.Globalization.CultureInfo.InvariantCulture));return;
+            case "gpu-load":
+                StressLoad.Gpu(int.Parse(args[1]),double.Parse(args[2],System.Globalization.CultureInfo.InvariantCulture));return;
             case "shared-preview-test":
                 await SharedPreviewTest();
                 return;
@@ -280,7 +296,7 @@ internal static class Program {
         Console.WriteLine($"PASS pipe-test: Read {frameCount} frames ({frameCount * frameBytes / 1024 / 1024} MB) in {sw.ElapsedMilliseconds} ms ({frameCount * 1000.0 / sw.ElapsedMilliseconds:F1} FPS)");
     }
 
-    private static async Task LatestFramePumpTest() {
+    private static async Task LatestFramePumpTest(bool dedicated = false) {
         const int bytes = 4096, total = 1200;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var name = "h3h-latest-test-" + Guid.NewGuid().ToString("N");
@@ -296,6 +312,7 @@ internal static class Program {
         var seen = new List<int>();
         int dropped = 0;
         var pump = LatestFramePump.RunAsync(input, bytes, frame => {
+            if(dedicated)Assert(!Thread.CurrentThread.IsThreadPoolThread,"capture uses a dedicated thread");
             var id = BitConverter.ToInt32(frame);
             if (id == 0) {
                 first.TrySetResult();
@@ -304,7 +321,7 @@ internal static class Program {
             }
             Assert(frame.Skip(4).All(b => b == (byte)id), "fragmented raw frame remains intact");
             seen.Add(id);
-        }, timeout.Token, () => { if (Interlocked.Increment(ref dropped) == total - 1) drained.TrySetResult(); });
+        }, timeout.Token, () => { if (Interlocked.Increment(ref dropped) == total - 1) drained.TrySetResult(); }, dedicatedVideoThread:dedicated);
         try {
             var frame = new byte[bytes];
             await source.WriteAsync(frame, timeout.Token);
@@ -323,12 +340,12 @@ internal static class Program {
         } finally { release.Set(); timeout.Cancel(); try { await pump; } catch { } }
         try {
             await LatestFramePump.RunAsync(new MemoryStream(new byte[bytes - 1]), bytes,
-                _ => throw new Exception("partial frame emitted"), CancellationToken.None);
+                _ => throw new Exception("partial frame emitted"), CancellationToken.None, dedicatedVideoThread:dedicated);
             throw new Exception("truncated frame accepted");
         } catch (EndOfStreamException) { }
         try {
             await LatestFramePump.RunAsync(new MemoryStream(new byte[bytes * 10]), bytes,
-                _ => throw new InvalidOperationException("output-failure"), CancellationToken.None);
+                _ => throw new InvalidOperationException("output-failure"), CancellationToken.None, dedicatedVideoThread:dedicated);
             throw new Exception("consumer error lost");
         } catch (InvalidOperationException ex) when (ex.Message == "output-failure") { }
         Console.WriteLine("PASS latest frame: slow output, buffer ownership, fragmentation, EOF, failure cleanup");
@@ -336,6 +353,8 @@ internal static class Program {
 
     private static async Task Unit(string root) {
         await LatestFramePumpTest();
+        await LatestFramePumpTest(true);
+        await VideoSchedulingTests.Preview();
         PerformanceTests.VerifyConversion();
         Directory.CreateDirectory(root);
         var persistedPath = Path.Combine(root, "preserved-settings.json");
@@ -1356,6 +1375,7 @@ internal static class Program {
 
     private static async Task PacingTest(string root, int fps, string codec, int bitrate, int seconds, int initialBitrate, string transport) {
         Directory.CreateDirectory(root);
+        using (var ownProcess=System.Diagnostics.Process.GetCurrentProcess()) Processes.PrioritizeVideo(ownProcess);
         var s = Settings.Load().Clone();
         s.Transport = transport; s.Fps = fps; s.Codec = codec; s.BitrateMbps = bitrate;
         s.Width = 1920; s.Height = 1080; s.Preview = true;

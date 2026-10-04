@@ -110,12 +110,13 @@ if ($Target -in @('All','Windows')) {
     $receiverExe = Join-Path $s8Dist 'H3HCam Receiver.exe'
     if (Test-Path $receiverExe) {
         $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($receiverExe)
-        if ($info.FileVersion -ne '4.0.5.0') {
-            throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.5.0 (got: $($info.FileVersion))"
+        if ($info.FileVersion -ne '4.0.7.0') {
+            throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.7.0 (got: $($info.FileVersion))"
         }
         Write-Host "✅ Receiver Release Guard: $receiverExe verified (Version: $($info.FileVersion))." -ForegroundColor Green
         try {
             Copy-Item -LiteralPath $receiverExe -Destination (Join-Path $s8Root 'H3HCam Receiver.exe') -Force
+            Copy-Item -LiteralPath (Join-Path $s8Dist 'libusb-1.0.dll') -Destination (Join-Path $s8Root 'libusb-1.0.dll') -Force
         } catch {
             Write-Warning "Could not overwrite root H3HCam Receiver.exe (process might be running): $_"
         }

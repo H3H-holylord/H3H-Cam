@@ -13,21 +13,32 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
     private readonly CancellationTokenSource stop;
     private readonly Task? pump;
     private Settings settings;
+    private readonly long startedAt=Environment.TickCount64;
+    private long lastPublishedAt=Environment.TickCount64;
+    public bool Stalled => decoder!=null && !Volatile.Read(ref settings).PrivacyMute &&
+        Environment.TickCount64-startedAt>8000 && Environment.TickCount64-Interlocked.Read(ref lastPublishedAt)>3000;
+    public long SpoutFrames => spout?.Frames ?? 0;
+    public long GpuDroppedFrames => spout?.GpuDroppedFrames ?? 0;
+    public int? DecoderProcessId => decoder?.Id;
+    public event Action? FramePublished;
     private long frames;
     private long skippedFrames;
     public long SkippedFrames => Interlocked.Read(ref skippedFrames);
 
     public bool Alive => decoder == null || (!decoder.HasExited && (pump == null || !pump.IsCompleted));
-    public long Frames => writer?.Frames ?? Interlocked.Read(ref frames);
+    public long Frames => writer?.Frames ?? spout?.Frames ?? Interlocked.Read(ref frames);
 
     public void UpdateSettings(Settings next) => Volatile.Write(ref settings, next.Clone());
 
     private readonly bool isBgra;
     private volatile bool previewEnabled;
-    private readonly PreviewSampler previewSampler = new();
+    private readonly LatestFramePreview? previewWorker;
     public bool CanSharePreview => isBgra && decoder != null && Alive;
     public event Action<byte[], int, int>? PreviewFrame;
-    public void SetPreviewEnabled(bool enabled) => previewEnabled = enabled;
+    public void SetPreviewEnabled(bool enabled) {
+        previewEnabled=enabled;
+        previewWorker?.SetEnabled(enabled);
+    }
 
 
     public VirtualCameraOutput(Settings settings, string sdp, CancellationToken cancellation, Action<string> log) {
@@ -102,12 +113,22 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                 "-fps_mode", "passthrough",
                 "-f", "rawvideo", "-y", pipePath
             ], line => log("Direct/Virtual Cam · " + line), stdout: false, videoPriority: true);
+            if(isBgra) {
+                var previewDim=PreviewDecoder.PreviewDimensions(settings);
+                previewWorker=new LatestFramePreview(outDim.Width,outDim.Height,previewDim.Width,previewDim.Height,
+                    (frame,w,h)=>{if(previewEnabled&&!Volatile.Read(ref this.settings).PrivacyMute)PreviewFrame?.Invoke(frame,w,h);},log);
+            }
             pump = Pump(frameBytes, log);
         } catch {
+            stop.Cancel();
+            Processes.Kill(decoder);
+            previewWorker?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            decoder?.Dispose();
             stop.Dispose();
             pipeServer?.Dispose();
             writer?.Dispose();
             spout?.Dispose();
+            mfCam?.Dispose();
             throw;
         }
     }
@@ -132,11 +153,10 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
 
                 var s = Volatile.Read(ref settings);
                 var outDim = s.OutputDimensions;
-                if (isBgra && previewEnabled && PreviewFrame != null) {
-                    var previewDim = PreviewDecoder.PreviewDimensions(s);
-                    var preview = previewSampler.Sample(frame, outDim.Width, outDim.Height, previewDim.Width, previewDim.Height);
-                    PreviewFrame.Invoke(preview, previewDim.Width, previewDim.Height);
-                }
+                bool published=false;
+                // Copy the untouched source into a bounded preview mailbox. Scaling and
+                // UI callbacks run separately; they cannot stall OBS/virtual-camera output.
+                if (isBgra && previewEnabled && PreviewFrame != null) previewWorker?.Submit(frame);
                 if (!isBgra) {
                     bool hasEffects = s.BackgroundEffect != "none" || s.SkinSmoothing;
                     bool hasColor = StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile, s.Brightness, s.Contrast, s.Saturation);
@@ -148,6 +168,7 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                             customBgPath: s.CustomBackgroundImage, useAi: s.AiSegmentation, aiEdgeFeather: s.AiEdgeFeather);
                     }
                     writer?.Write(frame);
+                    published=writer!=null;
                 } else {
                     bool hasEffects = s.BackgroundEffect != "none" || s.SkinSmoothing;
                     bool hasColor = StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile, s.Brightness, s.Contrast, s.Saturation, s.WbRedGain, s.WbGreenGain, s.WbBlueGain);
@@ -163,7 +184,7 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                     var finalDim = s.FinalOutputDimensions;
                     int neededNv12 = finalDim.Width * finalDim.Height * 3 / 2;
                     if (s.SuperResolution4K && (outDim.Width != finalDim.Width || outDim.Height != finalDim.Height)) {
-                        spout?.WriteFrame(frame, outDim.Width, outDim.Height, s.SuperResolutionSharpness);
+                        published=spout?.TryWriteFrame(frame,outDim.Width,outDim.Height,s.SuperResolutionSharpness)==true;
                         if (writer != null) {
                             int neededUpscaled = finalDim.Width * finalDim.Height * 4;
                             if (upscaledBuffer == null || upscaledBuffer.Length != neededUpscaled) {
@@ -175,20 +196,26 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                             }
                             StudioEffectsProcessor.BgraToNv12(upscaledBuffer, writerNv12Buffer, finalDim.Width, finalDim.Height);
                             writer.Write(writerNv12Buffer);
+                            published=true;
                         }
                     } else {
-                        spout?.WriteFrame(frame, outDim.Width, outDim.Height);
+                        published=spout?.TryWriteFrame(frame,outDim.Width,outDim.Height)==true;
                         if (writer != null) {
                             if (writerNv12Buffer == null || writerNv12Buffer.Length != neededNv12) {
                                 writerNv12Buffer = new byte[neededNv12];
                             }
                             StudioEffectsProcessor.BgraToNv12(frame, writerNv12Buffer, outDim.Width, outDim.Height);
                             writer.Write(writerNv12Buffer);
+                            published=true;
                         }
                     }
                 }
+                if(published) {
+                    Interlocked.Exchange(ref lastPublishedAt,Environment.TickCount64);
+                    FramePublished?.Invoke();
+                }
                 Interlocked.Increment(ref frames);
-            }, stop.Token, () => Interlocked.Increment(ref skippedFrames));
+            }, stop.Token, () => Interlocked.Increment(ref skippedFrames), dedicatedVideoThread:true);
         } catch (OperationCanceledException) {}
         catch (Exception ex) { if (!stop.IsCancellationRequested) log("Прямой видеовывод остановлен: " + ex.Message); }
     }
@@ -199,6 +226,7 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
         pipeServer?.Dispose();
         try { if (pump != null) await pump; }
         finally {
+            if(previewWorker!=null)await previewWorker.DisposeAsync();
             decoder?.Dispose();
             writer?.Dispose();
             spout?.Dispose();

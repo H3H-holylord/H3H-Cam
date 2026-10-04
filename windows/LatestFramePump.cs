@@ -6,7 +6,7 @@ namespace S8Cam;
 /// <summary>Drains complete decoded frames independently of a slower video output.</summary>
 public static class LatestFramePump {
     public static async Task RunAsync(Stream input, int frameBytes, Action<byte[]> output,
-        CancellationToken cancellation, Action? onDropped = null) {
+        CancellationToken cancellation, Action? onDropped = null, bool dedicatedVideoThread = false) {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(frameBytes);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         // Exactly three buffers: reading, pending, and in use by the output.
@@ -18,14 +18,28 @@ public static class LatestFramePump {
             AllowSynchronousContinuations = false
         }, dropped => { free.Enqueue(dropped); onDropped?.Invoke(); });
 
-        var consumer = Task.Run(async () => {
+        void ConsumeOnVideoThread() {
+            using var scheduling = new VideoThreadScheduling();
+            try {
+                while (latest.Reader.WaitToReadAsync(stop.Token).AsTask().GetAwaiter().GetResult()) {
+                    while (latest.Reader.TryRead(out var frame)) {
+                        try { output(frame); }
+                        finally { free.Enqueue(frame); }
+                    }
+                }
+            } catch { stop.Cancel(); throw; }
+        }
+        async Task ConsumeOnPool() {
             try {
                 await foreach (var frame in latest.Reader.ReadAllAsync(stop.Token)) {
                     try { output(frame); }
                     finally { free.Enqueue(frame); }
                 }
             } catch { stop.Cancel(); throw; }
-        }, CancellationToken.None);
+        }
+        var consumer = dedicatedVideoThread
+            ? Task.Factory.StartNew(ConsumeOnVideoThread,CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default)
+            : Task.Run(ConsumeOnPool,CancellationToken.None);
 
         Exception? readError = null;
         try {

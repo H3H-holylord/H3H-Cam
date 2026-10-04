@@ -1,7 +1,7 @@
 ﻿<Window x:Class="S8Cam.MainWindow"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="H3H Cam 4.0.6" Icon="app.ico" Width="1180" Height="900" MinWidth="1000" MinHeight="680"
+ Title="H3H Cam 4.0.7" Icon="app.ico" Width="1180" Height="900" MinWidth="1000" MinHeight="680"
  Background="#090F1A" Foreground="#E7F0FF" FontFamily="Segoe UI" FontSize="14" UseLayoutRounding="True" SnapsToDevicePixels="True"
  WindowStartupLocation="CenterScreen">
  <Grid Margin="24">

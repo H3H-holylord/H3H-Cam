@@ -19,6 +19,7 @@
 
 # Local distribution, diagnostics and optional model weights
 /*.exe
+/*.dll
 /*.apk
 /*.zip
 /*.pdf

@@ -133,6 +133,10 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     public event Action<byte[], int, int>? PreviewFrame;
     public bool Running => lifetime != null;
     public bool RequiresRestart(Settings next) => requestedSettings.RequiresStreamRestart(next);
+    public long SpoutFrames => virtualCamera?.SpoutFrames ?? 0;
+    public long GpuDroppedFrames => virtualCamera?.GpuDroppedFrames ?? 0;
+    public int? VirtualDecoderProcessId => virtualCamera?.DecoderProcessId;
+    public event Action? OutputFramePublished;
     public bool PreviewEnabled => settings.Preview;
     private volatile bool previewActive = true;
     public void SetPreviewActivity(bool active) {
@@ -147,6 +151,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         output.SetPreviewEnabled(settings.Preview && previewActive);
         output.PreviewFrame += (frame, w, h) => {
             if (settings.Preview && ReferenceEquals(virtualCamera, output)) PreviewFrame?.Invoke(frame, w, h);
+        };
+        output.FramePublished += () => {
+            if (ReferenceEquals(virtualCamera, output)) OutputFramePublished?.Invoke();
         };
         return output;
     }
@@ -1101,7 +1108,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             var statusDetails = details + (telemetryAge > 5000 ? " · telemetry reconnecting" : "") +
                 " · " + modeVerification +
                 (effectiveTransport == "wifi" ? $" · RTP loss {lost}, recovered {recovered}, NACK {Interlocked.Read(ref nackRequests)} · target {adaptiveBitrate / 1e6:F0} Mbps" : "") +
-                ((settings.VirtualCamera || settings.SpoutOutput) ? $" · Direct/Spout: {outputFps:F1} FPS · {outputFrames} кадров · пропущено устаревших {virtualCamera?.SkippedFrames ?? 0}" : "");
+                ((settings.VirtualCamera || settings.SpoutOutput) ? $" · Direct/Spout: {outputFps:F1} FPS · {outputFrames} кадров · пропущено устаревших {virtualCamera?.SkippedFrames ?? 0} · GPU skipped {virtualCamera?.GpuDroppedFrames ?? 0}" : "");
             Status?.Invoke(new LiveStatus(settings.PrivacyMute ? "Приватность · передача приостановлена" : idle > 4000 ? "Ожидание потока / reconnect" : androidState,
                 effectiveTransport == "direct" ? "USB accessory" : adb.Serial, TransportLabel(effectiveTransport), resolution, settings.Fps, fps, rate, encodedMbps,
                 Interlocked.Read(ref packets), elapsed.Elapsed,
@@ -1116,7 +1123,8 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 if (await lifecycle.WaitAsync(0, ct)) {
                   try {
                    if ((settings.VirtualCamera || settings.SpoutOutput) && (virtualCamera?.Alive != true ||
-                    virtualGeneration != Volatile.Read(ref sourceGeneration))) {
+                    virtualGeneration != Volatile.Read(ref sourceGeneration) || (fps>5 && virtualCamera?.Stalled==true))) {
+                    if(virtualCamera?.Stalled==true)log("Видеовывод не публикует кадры; перезапуск декодера с новым IDR.");
                     var oldCamera = virtualCamera;
                     virtualCamera = null;
                     if (oldCamera != null) await oldCamera.DisposeAsync();
