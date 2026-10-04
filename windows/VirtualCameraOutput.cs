@@ -23,6 +23,12 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
     public void UpdateSettings(Settings next) => Volatile.Write(ref settings, next.Clone());
 
     private readonly bool isBgra;
+    private volatile bool previewEnabled;
+    private readonly PreviewSampler previewSampler = new();
+    public bool CanSharePreview => isBgra && decoder != null && Alive;
+    public event Action<byte[], int, int>? PreviewFrame;
+    public void SetPreviewEnabled(bool enabled) => previewEnabled = enabled;
+
 
     public VirtualCameraOutput(Settings settings, string sdp, CancellationToken cancellation, Action<string> log) {
         this.settings = settings.Clone();
@@ -126,6 +132,11 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
 
                 var s = Volatile.Read(ref settings);
                 var outDim = s.OutputDimensions;
+                if (isBgra && previewEnabled && PreviewFrame != null) {
+                    var previewDim = PreviewDecoder.PreviewDimensions(s);
+                    var preview = previewSampler.Sample(frame, outDim.Width, outDim.Height, previewDim.Width, previewDim.Height);
+                    PreviewFrame.Invoke(preview, previewDim.Width, previewDim.Height);
+                }
                 if (!isBgra) {
                     bool hasEffects = s.BackgroundEffect != "none" || s.SkinSmoothing;
                     bool hasColor = StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile, s.Brightness, s.Contrast, s.Saturation);

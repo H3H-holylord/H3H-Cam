@@ -191,6 +191,12 @@ internal static class Program {
         if (args.Length == 0) throw new ArgumentException(
             "Commands: unit [folder] | probe <auto|usb|wifi> [serial] | stream <usb|wifi> <folder> [serial] [seconds]");
         switch (args[0]) {
+            case "shared-preview-test":
+                await SharedPreviewTest();
+                return;
+            case "performance-test":
+                PerformanceTests.Run();
+                return;
             case "pacing-test":
                 await PacingTest(Path.GetFullPath(args[1]), int.Parse(args[2]), args[3], int.Parse(args[4]),
                     args.Length > 5 ? int.Parse(args[5]) : 20, args.Length > 6 ? int.Parse(args[6]) : 0, args.ElementAtOrDefault(7) ?? "wifi");
@@ -330,6 +336,7 @@ internal static class Program {
 
     private static async Task Unit(string root) {
         await LatestFramePumpTest();
+        PerformanceTests.VerifyConversion();
         Directory.CreateDirectory(root);
         var persistedPath = Path.Combine(root, "preserved-settings.json");
         File.WriteAllText(persistedPath, JsonSerializer.Serialize(new Settings {
@@ -1405,6 +1412,42 @@ internal static class Program {
             Assert(errors == 0, "decoder retains probe keyframe references");
             if (initialBitrate > 0) Assert(states.Last().EncodedMbps > bitrate * .75, "live bitrate reaches the phone encoder");
             Console.WriteLine("PASS pacing-test");
+        } finally { await engine.Stop(); await RestoreSettings(backup); }
+    }
+
+    private static async Task SharedPreviewTest() {
+        var backup = await BackupSettings();
+        var s = Settings.Load().Clone();
+        s.Transport="usb"; s.Preview=true; s.SpoutOutput=true; s.VirtualCamera=true; s.Obs=false;
+        s.Width=1920; s.Height=1080; s.Fps=30; s.Codec="hevc";
+        long previews=0;
+        int previewWidth=0, previewHeight=0;
+        int DecoderCount() => System.Diagnostics.Process.GetProcessesByName("ffmpeg").Length;
+        await using var engine = new ReceiverEngine(s, Console.WriteLine);
+        engine.PreviewFrame += (_,w,h) => { previewWidth=w; previewHeight=h; Interlocked.Increment(ref previews); };
+        using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(70));
+        async Task Settle() => await Task.Delay(3000,timeout.Token);
+        try {
+            await engine.Start(timeout.Token); await Settle();
+            Assert(previews>10 && DecoderCount()==1,"Spout and preview share one decoder");
+            engine.SetPreviewActivity(false); await Task.Delay(500,timeout.Token);
+            var paused=Interlocked.Read(ref previews); var output=engine.VirtualCameraFrames;
+            await Task.Delay(1800,timeout.Token);
+            Assert(previews==paused && engine.VirtualCameraFrames>output+20,"hidden preview sleeps, camera continues");
+            engine.SetPreviewActivity(true); await Settle();
+            Assert(previews>paused+20,"preview resumes on show");
+            engine.SetPreviewEnabled(false); await Task.Delay(500,timeout.Token); paused=previews;
+            await Task.Delay(1200,timeout.Token); Assert(previews==paused,"shared preview toggle off");
+            engine.SetPreviewEnabled(true); await Settle(); Assert(previews>paused+20,"shared preview toggle on");
+            s.SpoutOutput=false; await engine.UpdateControls(s,timeout.Token); await Settle();
+            Assert(DecoderCount()==2 && engine.PreviewProcessId!=null,"NV12 output keeps standalone preview fallback");
+            s.VirtualCamera=false; await engine.UpdateControls(s,timeout.Token); await Settle();
+            Assert(DecoderCount()==1,"preview alone survives output removal");
+            s.SpoutOutput=true; s.VirtualCamera=true; s.Rotation=90;
+            await engine.UpdateControls(s,timeout.Token); await Settle();
+            Assert(DecoderCount()==1 && previewWidth==540 && previewHeight==960,"shared preview returns with portrait rotation");
+            await engine.Stop(); Assert(DecoderCount()==0 && engine.PreviewProcessId==null,"decoder cleanup");
+            Console.WriteLine("PASS shared-preview · one decoder · hidden/resume · toggles · NV12 fallback · portrait · cleanup");
         } finally { await engine.Stop(); await RestoreSettings(backup); }
     }
 

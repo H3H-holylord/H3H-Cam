@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
 using System.Threading.Tasks;
 
 namespace S8Cam;
@@ -78,53 +79,62 @@ public static class StudioEffectsProcessor {
         }
     }
 
-    public static void BgraToNv12(byte[] bgra, byte[] nv12, int w, int h) {
-        int ySize = w * h;
-        int uvOffset = ySize;
-        int halfW = w / 2;
-        int halfH = h / 2;
+    public static unsafe void BgraToNv12(byte[] bgra, byte[] nv12, int w, int h) {
+        if (w < 2 || h < 2 || (w & 1) != 0 || (h & 1) != 0 ||
+            bgra.Length < checked(w * h * 4) || nv12.Length < checked(w * h * 3 / 2))
+            throw new ArgumentException("NV12 needs even dimensions and complete buffers");
+        // Process each pair of rows once, with a bounded worker count. Y uses eight
+        // pixels per AVX2 instruction; UV retains the exact rounded 2x2 average.
+        fixed (byte* src = bgra, dst = nv12) {
+            var source = (nint)src;
+            var target = (nint)dst;
+            Parallel.For(0, h / 2, new ParallelOptions { MaxDegreeOfParallelism = 2 }, row => {
+                byte* top = (byte*)source + row * 2 * w * 4;
+                byte* bottom = top + w * 4;
+                byte* yTop = (byte*)target + row * 2 * w;
+                byte* yBottom = yTop + w;
+                byte* uv = (byte*)target + w * h + row * w;
+                WriteLuma(top, yTop, w);
+                WriteLuma(bottom, yBottom, w);
+                for (int x = 0; x < w; x += 2) {
+                    int i = x * 4;
+                    int r = (top[i+2] + top[i+6] + bottom[i+2] + bottom[i+6] + 2) >> 2;
+                    int g = (top[i+1] + top[i+5] + bottom[i+1] + bottom[i+5] + 2) >> 2;
+                    int b = (top[i] + top[i+4] + bottom[i] + bottom[i+4] + 2) >> 2;
+                    uv[x] = (byte)(((-38*r - 74*g + 112*b + 128) >> 8) + 128);
+                    uv[x+1] = (byte)(((112*r - 94*g - 18*b + 128) >> 8) + 128);
+                }
+            });
+        }
+    }
 
-        Parallel.For(0, h, y => {
-            int yRow = y * w;
-            int bgraRow = yRow * 4;
-            for (int x = 0; x < w; x++) {
-                int bIdx = bgraRow + (x * 4);
-                int b = bgra[bIdx];
-                int g = bgra[bIdx + 1];
-                int r = bgra[bIdx + 2];
-                int yVal = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-                nv12[yRow + x] = (byte)Math.Clamp(yVal, 0, 255);
+    private static unsafe void WriteLuma(byte* src, byte* dst, int width) {
+        int x = 0;
+        if (System.Runtime.Intrinsics.X86.Avx2.IsSupported) {
+            var mask = System.Runtime.Intrinsics.Vector256.Create(255);
+            var red = System.Runtime.Intrinsics.Vector256.Create(66);
+            var green = System.Runtime.Intrinsics.Vector256.Create(129);
+            var blue = System.Runtime.Intrinsics.Vector256.Create(25);
+            var rounding = System.Runtime.Intrinsics.Vector256.Create(128);
+            var offset = System.Runtime.Intrinsics.Vector256.Create(16);
+            for (; x <= width - 8; x += 8) {
+                var pixels = System.Runtime.Intrinsics.X86.Avx.LoadVector256((int*)(src + x*4));
+                var b = System.Runtime.Intrinsics.X86.Avx2.And(pixels, mask);
+                var g = System.Runtime.Intrinsics.X86.Avx2.And(System.Runtime.Intrinsics.X86.Avx2.ShiftRightLogical(pixels, 8), mask);
+                var r = System.Runtime.Intrinsics.X86.Avx2.And(System.Runtime.Intrinsics.X86.Avx2.ShiftRightLogical(pixels, 16), mask);
+                var sum = System.Runtime.Intrinsics.X86.Avx2.Add(
+                    System.Runtime.Intrinsics.X86.Avx2.MultiplyLow(r, red),
+                    System.Runtime.Intrinsics.X86.Avx2.Add(System.Runtime.Intrinsics.X86.Avx2.MultiplyLow(g, green), System.Runtime.Intrinsics.X86.Avx2.MultiplyLow(b, blue)));
+                var y = System.Runtime.Intrinsics.X86.Avx2.Add(System.Runtime.Intrinsics.X86.Avx2.ShiftRightLogical(System.Runtime.Intrinsics.X86.Avx2.Add(sum, rounding), 8), offset);
+                var shorts = System.Runtime.Intrinsics.X86.Sse2.PackSignedSaturate(y.GetLower(), y.GetUpper());
+                var bytes = System.Runtime.Intrinsics.X86.Sse2.PackUnsignedSaturate(shorts, shorts);
+                System.Runtime.CompilerServices.Unsafe.WriteUnaligned(dst + x, bytes.AsUInt64().GetElement(0));
             }
-        });
-
-        Parallel.For(0, halfH, uvY => {
-            int uvRow = uvOffset + uvY * w;
-            int y0 = uvY * 2;
-            int y1 = y0 + 1;
-            int bgraRow0 = y0 * w * 4;
-            int bgraRow1 = (y1 < h ? y1 : y0) * w * 4;
-
-            for (int uvX = 0; uvX < halfW; uvX++) {
-                int x0 = uvX * 2;
-                int x1 = x0 + 1 < w ? x0 + 1 : x0;
-
-                int i00 = bgraRow0 + x0 * 4;
-                int i01 = bgraRow0 + x1 * 4;
-                int i10 = bgraRow1 + x0 * 4;
-                int i11 = bgraRow1 + x1 * 4;
-
-                int rAvg = (bgra[i00 + 2] + bgra[i01 + 2] + bgra[i10 + 2] + bgra[i11 + 2] + 2) >> 2;
-                int gAvg = (bgra[i00 + 1] + bgra[i01 + 1] + bgra[i10 + 1] + bgra[i11 + 1] + 2) >> 2;
-                int bAvg = (bgra[i00] + bgra[i01] + bgra[i10] + bgra[i11] + 2) >> 2;
-
-                int u = ((-38 * rAvg - 74 * gAvg + 112 * bAvg + 128) >> 8) + 128;
-                int v = ((112 * rAvg - 94 * gAvg - 18 * bAvg + 128) >> 8) + 128;
-
-                int uvIdx = uvRow + uvX * 2;
-                nv12[uvIdx] = (byte)Math.Clamp(u, 0, 255);
-                nv12[uvIdx + 1] = (byte)Math.Clamp(v, 0, 255);
-            }
-        });
+        }
+        for (; x < width; x++) {
+            int i = x*4;
+            dst[x] = (byte)(((66*src[i+2] + 129*src[i+1] + 25*src[i] + 128) >> 8) + 16);
+        }
     }
 
     public static void ApplyEffects(
@@ -164,6 +174,8 @@ public static class StudioEffectsProcessor {
         int stride = width * 4;
 
         if (!hasEffect && !skinSmoothing) {
+            if (TryApplyChannelLut(src, dst, width, height, colorProfile, brightness, contrast, saturation, wbR, wbG, wbB)) return;
+            // Profiles with cross-channel luminance/saturation retain their full transform.
             // Ultra-fast color-only path: zero mask calculations, pure parallel color grading
             Parallel.For(0, height, y => {
                 int rowOffset = y * stride;
@@ -505,6 +517,39 @@ public static class StudioEffectsProcessor {
                 rSum += temp[addIdx + 2] - temp[subIdx + 2];
             }
         });
+    }
+
+    private sealed record ChannelLut(string Profile, double Brightness, double Contrast, float Red, float Green, float Blue,
+        byte[] R, byte[] G, byte[] B);
+    private static ChannelLut? lastChannelLut;
+
+    private static unsafe bool TryApplyChannelLut(byte[] src, byte[] dst, int width, int height, string profile,
+        double brightness, double contrast, double saturation, float wbR, float wbG, float wbB) {
+        // These profiles operate on channels independently. A 256-entry LUT gives
+        // exactly the existing float transform/rounding, without doing it per pixel.
+        if (profile is not ("none" or "clean" or "warm" or "cold") || Math.Abs(saturation-1) > .001) return false;
+        var lut = Volatile.Read(ref lastChannelLut);
+        if (lut == null || lut.Profile != profile || lut.Brightness != brightness || lut.Contrast != contrast ||
+            lut.Red != wbR || lut.Green != wbG || lut.Blue != wbB) {
+            var rLut=new byte[256]; var gLut=new byte[256]; var bLut=new byte[256];
+            for (int i=0; i<256; i++) {
+                byte r=(byte)i, g=(byte)i, b=(byte)i;
+                ApplyPixelColor(ref r, ref g, ref b, profile, brightness, contrast, saturation, wbR, wbG, wbB);
+                rLut[i]=r; gLut[i]=g; bLut[i]=b;
+            }
+            lut = new ChannelLut(profile,brightness,contrast,wbR,wbG,wbB,rLut,gLut,bLut);
+            Volatile.Write(ref lastChannelLut,lut);
+        }
+        fixed (byte* input=src, output=dst, r=lut.R, g=lut.G, b=lut.B) {
+            int count=width*height;
+            for (int i=0; i<count; i++) {
+                byte* pixel=input+i*4;
+                // Read all channels before writing: in-place output is supported.
+                uint color=(uint)(b[pixel[0]] | (g[pixel[1]]<<8) | (r[pixel[2]]<<16)) | 0xff000000u;
+                System.Runtime.CompilerServices.Unsafe.WriteUnaligned(output+i*4,color);
+            }
+        }
+        return true;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

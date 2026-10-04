@@ -145,14 +145,19 @@ public sealed class VirtualCameraWriter : IDisposable {
         } catch { mapping.Dispose(); throw; }
     }
 
-    public void Write(byte[] nv12) {
+    public unsafe void Write(byte[] nv12) {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (nv12.Length != frameBytes) throw new ArgumentException("NV12 frame size mismatch");
         var next = unchecked(++sequence);
         var offset = 96L + next % 3 * stride;
         view.Write(0, next);
         view.Write(offset, (ulong)(Stopwatch.GetTimestamp() * (1_000_000_000.0 / Stopwatch.Frequency)));
-        view.WriteArray(offset + 32, nv12, 0, frameBytes);
+        byte* destination = null;
+        view.SafeMemoryMappedViewHandle.AcquirePointer(ref destination);
+        try {
+            fixed (byte* source = nv12)
+                Buffer.MemoryCopy(source, destination + view.PointerOffset + offset + 32, frameBytes, frameBytes);
+        } finally { view.SafeMemoryMappedViewHandle.ReleasePointer(); }
         Thread.MemoryBarrier();
         view.Write(4, next);
         view.Write(8, 2u); // READY

@@ -13,15 +13,16 @@
 - Камеры, фокус, экспозиция, WB, зум, стабилизация и автокадр — по возможностям устройства.
 - Отключаемый предпросмотр, Spout2 для OBS и виртуальная камера для приложений.
 - Foreground service, погашение экрана, переподключение, статистика FPS/битрейта и батареи.
+- Общий декодер для Spout2 и предпросмотра, пауза скрытого предпросмотра и ускоренная обработка цвета/NV12: [проверка CPU](docs/PERFORMANCE.md).
 - При перегрузке Windows пропускает устаревшие готовые кадры. Видеопроцессы автоматически получают приоритет «Выше обычного».
 
 ## Скачать
 
 | Файл | Назначение |
 |---|---|
-| [Windows x64 ZIP](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.5/H3H-Cam-4.0.5-Windows-x64.zip) | Клиент 4.0.5, .NET runtime включён |
-| [Android APK](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.5/H3H-Cam-4.0.3.apk) | Android 4.0.3, Android 8+ |
-| [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.5/SHA256SUMS.txt) | Проверка скачанных файлов |
+| [Windows x64 ZIP](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.6/H3H-Cam-4.0.6-Windows-x64.zip) | Клиент 4.0.6, .NET runtime включён |
+| [Android APK](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.6/H3H-Cam-4.0.3.apk) | Android 4.0.3, Android 8+ |
+| [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.6/SHA256SUMS.txt) | Проверка скачанных файлов |
 
 FFmpeg/FFplay, ADB и OBS устанавливаются отдельно. Клиент ищет их автоматически или принимает указанные пути. AI-эффекты требуют дополнительных совместимых весов; модель не входит в публичный релиз.
 

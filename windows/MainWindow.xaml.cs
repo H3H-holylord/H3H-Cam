@@ -50,6 +50,13 @@ public partial class MainWindow : Window {
     private byte[]? processedPreviewBuffer;
     private byte[]? overlayBuffer;
     private WifiDiscoveryService? wifiDiscovery;
+    private volatile bool previewRenderingVisible;
+    private TaskCompletionSource? requestedSnapshotFrame;
+    private void UpdatePreviewActivity() {
+        previewRenderingVisible = (IsVisible && WindowState != WindowState.Minimized) ||
+            (previewWindow?.IsVisible == true && previewWindow.WindowState != WindowState.Minimized);
+        engine?.SetPreviewActivity(previewRenderingVisible || requestedSnapshotFrame != null);
+    }
     private int renderingFrame = 0;
     private readonly byte[][] previewUiBuffers = new byte[2][];
     private int previewUiBufIndex = 0;
@@ -63,6 +70,7 @@ public partial class MainWindow : Window {
     public MainWindow() {
         filling = true;
         InitializeComponent();
+        IsVisibleChanged += (_, _) => UpdatePreviewActivity();
         wbOverlayTimer.Tick += (_, _) => {
             wbOverlayTimer.Stop();
             if (WbTargetBox != null) WbTargetBox.Visibility = Visibility.Collapsed;
@@ -183,6 +191,7 @@ public partial class MainWindow : Window {
             trayIcon.Initialize();
         };
         StateChanged += (_, _) => {
+            UpdatePreviewActivity();
             if (WindowState == WindowState.Minimized && settings.MinimizeToTray) {
                 Hide();
             }
@@ -875,8 +884,11 @@ public partial class MainWindow : Window {
             settings = next;
             settings.Save();
             engine = new ReceiverEngine(settings, Log);
+            UpdatePreviewActivity();
             engine.Status += status => Dispatcher.BeginInvoke(() => ShowStatus(status));
             engine.PreviewFrame += (buf, w, h) => {
+                var snapshotRequest = Volatile.Read(ref requestedSnapshotFrame);
+                if (!previewRenderingVisible && snapshotRequest == null) return;
                 int needed = w * h * 4;
                 lock (latestRawPreviewLock) {
                     if (latestRawPreviewFrame == null || latestRawPreviewFrame.Length != needed) {
@@ -886,6 +898,8 @@ public partial class MainWindow : Window {
                     latestRawPreviewW = w;
                     latestRawPreviewH = h;
                 }
+                snapshotRequest?.TrySetResult();
+                if (!previewRenderingVisible) return;
                 if (Interlocked.CompareExchange(ref renderingFrame, 1, 0) == 0) {
                     Task.Run(() => {
                         try {
@@ -1282,7 +1296,18 @@ public partial class MainWindow : Window {
 
     private void Record_Click(object sender, RoutedEventArgs e) => ToggleRecording();
 
-    public void TriggerSnapshot() {
+    public async void TriggerSnapshot() {
+        // A tray snapshot briefly wakes preview sampling and waits for a fresh frame.
+        // Do not save the last frame rendered before the window was hidden.
+        if (!previewRenderingVisible && engine?.Running == true && engine.PreviewEnabled && !settings.PrivacyMute) {
+            if (requestedSnapshotFrame != null) return;
+            var request = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref requestedSnapshotFrame, request);
+            engine.SetPreviewActivity(true);
+            try { await request.Task.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (TimeoutException) { Log("Снимок невозможен: новый кадр не поступил."); return; }
+            finally { Volatile.Write(ref requestedSnapshotFrame, null); UpdatePreviewActivity(); }
+        }
         byte[]? snapFrame = null;
         int frameW = 0, frameH = 0;
         lock (latestRawPreviewLock) {
@@ -2619,7 +2644,9 @@ public partial class MainWindow : Window {
            () => Dispatcher.Invoke(ToggleZebra),
            () => Dispatcher.Invoke(TriggerSnapshot),
            () => Dispatcher.Invoke(ToggleRecording));
-        previewWindow.Closed += (_, _) => previewWindow = null;
+        previewWindow.Closed += (_, _) => { previewWindow = null; UpdatePreviewActivity(); };
+        previewWindow.IsVisibleChanged += (_, _) => UpdatePreviewActivity();
+        previewWindow.StateChanged += (_, _) => UpdatePreviewActivity();
         previewWindow.UpdateZoom(CurrentZoomLabel());
         previewWindow.UpdateLockState(LockAeAwb.IsChecked == true);
         previewWindow.UpdateGridState(gridEnabled);

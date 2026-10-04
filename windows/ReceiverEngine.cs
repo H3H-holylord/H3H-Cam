@@ -134,10 +134,26 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     public bool Running => lifetime != null;
     public bool RequiresRestart(Settings next) => requestedSettings.RequiresStreamRestart(next);
     public bool PreviewEnabled => settings.Preview;
-    public int? PreviewProcessId => previewDecoder?.Alive == true ? 1 : ffplay?.Id;
+    private volatile bool previewActive = true;
+    public void SetPreviewActivity(bool active) {
+        previewActive = active;
+        virtualCamera?.SetPreviewEnabled(settings.Preview && active);
+    }
+    private bool SharedPreview => virtualCamera?.CanSharePreview == true;
+    public int? PreviewProcessId => settings.Preview && SharedPreview ? 1 : previewDecoder?.Alive == true ? 1 : ffplay?.Id;
+
+    private VirtualCameraOutput CreateVirtualCamera(CancellationToken ct) {
+        var output = new VirtualCameraOutput(settings, virtualSdpPath, ct, log);
+        output.SetPreviewEnabled(settings.Preview && previewActive);
+        output.PreviewFrame += (frame, w, h) => {
+            if (settings.Preview && ReferenceEquals(virtualCamera, output)) PreviewFrame?.Invoke(frame, w, h);
+        };
+        return output;
+    }
 
     public void SetPreviewEnabled(bool enabled) {
         settings.Preview = enabled;
+        virtualCamera?.SetPreviewEnabled(enabled && previewActive);
         if (enabled) StartPreview();
         else StopPreview();
     }
@@ -169,6 +185,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         if (settings.AutoPcIp) settings.PcIp = oldSettings.PcIp;
         adb.UpdateSettings(settings);
         virtualCamera?.UpdateSettings(settings);
+        virtualCamera?.SetPreviewEnabled(settings.Preview && previewActive);
 
         // Reset adaptive bitrate to requested setting so it never gets stuck at floor
         var targetBitrate = nextSettings.EffectiveBitrateMbps(effectiveTransport) * 1_000_000;
@@ -190,7 +207,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     if (old != null) await old.DisposeAsync();
                     if (settings.VirtualCamera || settings.SpoutOutput) {
                         try {
-                            virtualCamera = new VirtualCameraOutput(settings, virtualSdpPath, ct, log);
+                            virtualCamera = CreateVirtualCamera(ct);
                             virtualGeneration = Volatile.Read(ref sourceGeneration);
                         } catch (Exception ex) {
                             log("⚠️ Виртуальная камера недоступна: " + ex.Message);
@@ -205,6 +222,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 ffplay = null;
                 LaunchExternalFfplay();
             }
+            if (settings.Preview) StartPreview();
             RequestIdr();
         }
 
@@ -519,7 +537,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 await File.WriteAllTextAsync(virtualSdpPath, (await File.ReadAllTextAsync(sdpPath, ct))
                     .Replace($"m=video {ingestPort} ", $"m=video {virtualIngestPort} "), ct);
                 if (settings.VirtualCamera || settings.SpoutOutput) try {
-                    virtualCamera = new VirtualCameraOutput(settings, virtualSdpPath, ct, log);
+                    virtualCamera = CreateVirtualCamera(ct);
                     virtualBootstrapped = false;
                     virtualGeneration = Volatile.Read(ref sourceGeneration);
                     if (settings.VirtualCamera) log("Камера для приложений: выберите OBS Virtual Camera. В OBS не включайте её выход одновременно с H3H Cam.");
@@ -667,6 +685,15 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     }
 
     private void StartPreview() {
+        virtualCamera?.SetPreviewEnabled(settings.Preview && previewActive);
+        if (SharedPreview) {
+            if (previewDecoder != null) {
+                _ = previewDecoder.DisposeAsync();
+                previewDecoder = null;
+            }
+            previewGeneration = Volatile.Read(ref sourceGeneration);
+            return;
+        }
         previewBootstrapped = false;
         previewGeneration = Volatile.Read(ref sourceGeneration);
         if (previewDecoder == null && File.Exists(previewSdpPath)) {
@@ -680,6 +707,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     }
 
     private void StopPreview() {
+        virtualCamera?.SetPreviewEnabled(false);
         if (previewDecoder != null) {
             _ = previewDecoder.DisposeAsync();
             previewDecoder = null;
@@ -827,7 +855,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 await forward!.SendAsync(packet.AsMemory(0, length), recordTarget, ct);
             }
         }
-        if (settings.Preview && previewGeneration == Volatile.Read(ref sourceGeneration) &&
+        if (settings.Preview && (previewDecoder != null || ffplay?.HasExited == false) && previewGeneration == Volatile.Read(ref sourceGeneration) &&
             (previewBootstrapped || bootstrap)) {
             previewBootstrapped = true;
             await forward!.SendAsync(packet.AsMemory(0, length), previewIngestEndpoint!, ct);
@@ -1094,7 +1122,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     if (oldCamera != null) await oldCamera.DisposeAsync();
                     virtualBootstrapped = false;
                     try {
-                        virtualCamera = new VirtualCameraOutput(settings, virtualSdpPath, ct, log);
+                        virtualCamera = CreateVirtualCamera(ct);
                         virtualGeneration = Volatile.Read(ref sourceGeneration);
                     } catch (Exception ex) {
                         log("⚠️ Прямой видеовывод недоступен: " + ex.Message);
@@ -1118,7 +1146,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 if (!settings.Preview && (previewDecoder != null || ffplay != null)) {
                     StopPreview();
                     log("Предпросмотр выключен; передача продолжается.");
-                } else if (settings.Preview && (previewDecoder == null || previewGeneration != Volatile.Read(ref sourceGeneration))) {
+                } else if (settings.Preview && ((previewDecoder?.Alive != true && !SharedPreview) || (previewDecoder != null && SharedPreview) || previewGeneration != Volatile.Read(ref sourceGeneration))) {
                     StopPreview();
                     try { StartPreview(); }
                     catch {

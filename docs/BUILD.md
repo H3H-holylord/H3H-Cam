@@ -34,3 +34,5 @@ cd android
 ## Публикация
 
 Исходники — в main, бинарники — в Releases. Не коммитьте ключи, signing.properties, local.properties, AppData-настройки и личные логи. Локальный Create-Portable-Package.ps1 предназначен для личной полной сборки; публичный ZIP не включает FFmpeg/ADB/OBS и веса AI.
+
+Проверки производительности и аппаратного предпросмотра описаны в [PERFORMANCE.md](PERFORMANCE.md).

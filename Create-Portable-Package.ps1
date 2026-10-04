@@ -7,7 +7,7 @@ $s8Root = $PSScriptRoot
 if (-not $DistDir) { $DistDir = Join-Path $s8Root 'dist' }
 $DistDir = [IO.Path]::GetFullPath($DistDir)
 
-Write-Host "=== Создание автономного Portable-пакета H3H Cam 4.0.5 ===" -ForegroundColor Cyan
+Write-Host "=== Создание автономного Portable-пакета H3H Cam 4.0.6 ===" -ForegroundColor Cyan
 
 function Get-AndroidTool([string]$ToolName) {
     $sdk = $env:ANDROID_HOME
@@ -93,8 +93,8 @@ function Assert-ReleaseApk([string]$ApkPath) {
 function Assert-ReleaseExe([string]$ExePath) {
     if (-not (Test-Path $ExePath)) { throw "Receiver EXE does not exist: $ExePath" }
     $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ExePath)
-    if ($info.FileVersion -ne '4.0.5.0') {
-        throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.5.0 (got: $($info.FileVersion))"
+    if ($info.FileVersion -ne '4.0.6.0') {
+        throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.6.0 (got: $($info.FileVersion))"
     }
     Write-Host "✅ Receiver Release Guard: $ExePath подтверждён (Version: $($info.FileVersion))." -ForegroundColor Green
 }
@@ -137,7 +137,7 @@ if (-not $ffplayPath -or -not (Test-Path $ffplayPath)) { throw "Не найде�
 $adbDir = Split-Path $adbPath -Parent
 
 # 3. Формируем папку пакета
-$portableDir = Join-Path $DistDir 'H3H-Cam-4.0.5-Portable'
+$portableDir = Join-Path $DistDir 'H3H-Cam-4.0.6-Portable'
 $portableDir = [IO.Path]::GetFullPath($portableDir)
 if ([IO.Path]::GetDirectoryName($portableDir) -ne $DistDir.TrimEnd('\')) {
     throw "Portable target must be a direct child of DistDir: $portableDir"
@@ -178,9 +178,11 @@ if (Test-Path $readmeSrc) {
     Copy-Item -LiteralPath $readmeSrc -Destination (Join-Path $portableDir 'README.txt') -Force
 }
 
-foreach ($doc in @('AUDIT-4.0.1.md', 'QUICKSTART-4.0.5.md', 'WIFI-FIX-4.0.2.md', 'PACING-FIX-4.0.3.md', 'LATENCY-FIX-4.0.4.md', 'PRIORITY-4.0.5.md')) {
-    Copy-Item -LiteralPath (Join-Path $s8Root $doc) -Destination $portableDir
+foreach ($doc in @('AUDIT-4.0.1.md', 'QUICKSTART-4.0.5.md', 'WIFI-FIX-4.0.2.md', 'PACING-FIX-4.0.3.md', 'LATENCY-FIX-4.0.4.md', 'PRIORITY-4.0.5.md', 'docs/PERFORMANCE.md', 'docs/QUICKSTART.md')) {
+    $documentPath = Join-Path $s8Root $doc
+    if (Test-Path -LiteralPath $documentPath) { Copy-Item -LiteralPath $documentPath -Destination $portableDir }
 }
+Copy-Item -LiteralPath (Join-Path $s8Root 'docs') -Destination (Join-Path $portableDir 'docs') -Recurse -Force
 # Копируем утилиты в tools/
 Write-Host "Копирование утилит в tools/..." -ForegroundColor Gray
 Copy-Item -LiteralPath $adbPath -Destination (Join-Path $toolsDir 'adb.exe') -Force
@@ -207,7 +209,7 @@ $hashLines = Get-ChildItem -LiteralPath $portableDir -File -Recurse | Sort-Objec
 
 # 4. Создаем ZIP-архив со стандартными разделителями '/'
 if (-not $NoZip) {
-    $zipPath = Join-Path $DistDir 'H3H-Cam-4.0.5-Portable.zip'
+    $zipPath = Join-Path $DistDir 'H3H-Cam-4.0.6-Portable.zip'
     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
     Write-Host "Сжатие в ZIP-архив: $zipPath ..." -ForegroundColor Yellow
     
