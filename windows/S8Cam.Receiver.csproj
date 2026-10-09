@@ -6,7 +6,7 @@
     <PublishSingleFile>true</PublishSingleFile><SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier><DebugType>none</DebugType>
-    <Version>4.0.7</Version><ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>4.0.8</Version><ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

@@ -33,7 +33,17 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
     private readonly bool isBgra;
     private volatile bool previewEnabled;
     private readonly LatestFramePreview? previewWorker;
-    public bool CanSharePreview => isBgra && decoder != null && Alive;
+    public bool CanSharePreview => decoder != null && Alive;
+    public bool RequiresFormatChange(Settings next) => isBgra != RequiresBgra(next,spout?.GpuNv12Ready==true);
+    private static bool RequiresBgra(Settings s,bool nv12GpuReady) {
+        bool wb=StudioEffectsProcessor.HasColorAdjustment("none",0,1,1,s.WbRedGain,s.WbGreenGain,s.WbBlueGain);
+        bool color=StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile,s.Brightness,s.Contrast,s.Saturation,
+            s.WbRedGain,s.WbGreenGain,s.WbBlueGain);
+        // Keep the RGB effects/WB/alpha contract when both outputs are enabled.
+        // Neutral NV12 and Spout-only GPU grading can avoid full-size RGB copies.
+        return (s.VirtualCamera&&wb) || (s.SpoutOutput&&(!nv12GpuReady || s.BackgroundEffect!="none" ||
+            s.SkinSmoothing || (s.VirtualCamera&&color)));
+    }
     public event Action<byte[], int, int>? PreviewFrame;
     public void SetPreviewEnabled(bool enabled) {
         previewEnabled=enabled;
@@ -49,12 +59,13 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
         if (settings.SpoutOutput) {
             try {
                 spout = new SpoutSender("H3HCam", finalDim.Width, finalDim.Height);
-                isBgra = true;
-                log($"Spout2: активирован аппаратный D3D11 сендер «H3HCam» ({finalDim.Width}x{finalDim.Height}){(settings.SuperResolution4K ? " [💎 4K Super Resolution]" : "")}");
+                log($"Spout2: активирован аппаратный D3D11 сендер «H3HCam» ({finalDim.Width}x{finalDim.Height})");
             } catch (Exception ex) {
                 log("⚠️ Spout2 ошибка: " + ex.Message);
             }
         }
+
+        isBgra=RequiresBgra(settings,spout?.GpuNv12Ready==true);
 
         if (settings.VirtualCamera) {
             try {
@@ -108,16 +119,14 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                 "-buffer_size", "16777216", "-max_delay", "30000", "-reorder_queue_size", "256",
                 "-i", sdp,
                 "-map", "0:v:0", "-an",
-                "-vf", settings.BuildVideoFilter(outDim.Width, outDim.Height),
+                "-vf", settings.BuildVideoFilter(outDim.Width, outDim.Height,nv12Limited601:!isBgra),
                 "-pix_fmt", pixFmt,
                 "-fps_mode", "passthrough",
                 "-f", "rawvideo", "-y", pipePath
             ], line => log("Direct/Virtual Cam · " + line), stdout: false, videoPriority: true);
-            if(isBgra) {
-                var previewDim=PreviewDecoder.PreviewDimensions(settings);
-                previewWorker=new LatestFramePreview(outDim.Width,outDim.Height,previewDim.Width,previewDim.Height,
-                    (frame,w,h)=>{if(previewEnabled&&!Volatile.Read(ref this.settings).PrivacyMute)PreviewFrame?.Invoke(frame,w,h);},log);
-            }
+            var previewDim=PreviewDecoder.PreviewDimensions(settings);
+            previewWorker=new LatestFramePreview(outDim.Width,outDim.Height,previewDim.Width,previewDim.Height,
+                (frame,w,h)=>{if(previewEnabled&&!Volatile.Read(ref this.settings).PrivacyMute)PreviewFrame?.Invoke(frame,w,h);},log);
             pump = Pump(frameBytes, log);
         } catch {
             stop.Cancel();
@@ -156,19 +165,59 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                 bool published=false;
                 // Copy the untouched source into a bounded preview mailbox. Scaling and
                 // UI callbacks run separately; they cannot stall OBS/virtual-camera output.
-                if (isBgra && previewEnabled && PreviewFrame != null) previewWorker?.Submit(frame);
+                if (previewEnabled && PreviewFrame != null) previewWorker?.Submit(frame);
                 if (!isBgra) {
                     bool hasEffects = s.BackgroundEffect != "none" || s.SkinSmoothing;
                     bool hasColor = StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile, s.Brightness, s.Contrast, s.Saturation);
-                    if (hasEffects || hasColor) {
+                    bool cpuColorApplied = false;
+
+                    // Apply CPU studio effects (blur, green screen, skin smoothing)
+                    // Or if Virtual Camera is active and needs CPU color adjustments:
+                    if (hasEffects || (writer != null && hasColor)) {
                         StudioEffectsProcessor.ApplyNv12Effects(frame, outDim.Width, outDim.Height,
                             s.BackgroundEffect, s.BackgroundBlurStrength, s.SkinSmoothing,
                             focusNormX: 0.5f, focusNormY: 0.45f,
                             s.ColorProfile, s.Brightness, s.Contrast, s.Saturation,
                             customBgPath: s.CustomBackgroundImage, useAi: s.AiSegmentation, aiEdgeFeather: s.AiEdgeFeather);
+                        cpuColorApplied = hasColor;
                     }
-                    writer?.Write(frame);
-                    published=writer!=null;
+
+                    // FFmpeg has already applied rotation, mirror, crop and padding.
+                    // Apply orientation only once, identically in preview/Spout/virtual camera.
+                    if (spout != null) {
+                        bool ok = spout.TryWriteNv12Frame(
+                            frame,
+                            outDim.Width,
+                            outDim.Height,
+                            s.SuperResolution4K ? s.SuperResolutionSharpness : 0,
+                            0,
+                            false,
+                            cpuColorApplied ? "none" : s.ColorProfile,
+                            cpuColorApplied ? 0.0 : s.Brightness,
+                            cpuColorApplied ? 1.0 : s.Contrast,
+                            cpuColorApplied ? 1.0 : s.Saturation,
+                            (float)s.WbRedGain,
+                            (float)s.WbGreenGain,
+                            (float)s.WbBlueGain);
+                        if (ok) published = true;
+                    }
+
+                    // 2. Virtual Camera Driver Output (Direct memory copy or Super Resolution 4K)
+                    if (writer != null) {
+                        var finalDim = s.FinalOutputDimensions;
+                        int neededNv12 = finalDim.Width * finalDim.Height * 3 / 2;
+                        if (s.SuperResolution4K && (outDim.Width != finalDim.Width || outDim.Height != finalDim.Height)) {
+                            if (writerNv12Buffer == null || writerNv12Buffer.Length != neededNv12) {
+                                writerNv12Buffer = new byte[neededNv12];
+                            }
+                            SuperResolutionEngine.UpscaleNv12(frame, outDim.Width, outDim.Height, writerNv12Buffer, finalDim.Width, finalDim.Height, s.SuperResolutionSharpness);
+                            writer.Write(writerNv12Buffer);
+                            published = true;
+                        } else {
+                            writer.Write(frame);
+                            published = true;
+                        }
+                    }
                 } else {
                     bool hasEffects = s.BackgroundEffect != "none" || s.SkinSmoothing;
                     bool hasColor = StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile, s.Brightness, s.Contrast, s.Saturation, s.WbRedGain, s.WbGreenGain, s.WbBlueGain);

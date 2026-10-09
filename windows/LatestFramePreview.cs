@@ -8,7 +8,7 @@ public sealed class LatestFramePreview : IAsyncDisposable {
     private readonly PreviewSampler sampler=new();
     private readonly Action<byte[],int,int> output;
     private readonly Action<string> log;
-    private readonly int width,height,previewWidth,previewHeight,bytes;
+    private readonly int width,height,previewWidth,previewHeight,bytes,nv12Bytes;
     private byte[]? first,second,pending,processing;
     private bool disposed;
     private volatile bool enabled;
@@ -16,7 +16,7 @@ public sealed class LatestFramePreview : IAsyncDisposable {
     public long Dropped => Interlocked.Read(ref dropped);
     public LatestFramePreview(int width,int height,int previewWidth,int previewHeight,Action<byte[],int,int> output,Action<string> log) {
         this.width=width;this.height=height;this.previewWidth=previewWidth;this.previewHeight=previewHeight;
-        bytes=checked(width*height*4);this.output=output;this.log=log;
+        bytes=checked(width*height*4);nv12Bytes=checked(width*height*3/2);this.output=output;this.log=log;
         new Thread(Work) {IsBackground=true,Name="H3H preview",Priority=ThreadPriority.BelowNormal}.Start();
     }
     public void SetEnabled(bool value) {
@@ -25,13 +25,15 @@ public sealed class LatestFramePreview : IAsyncDisposable {
     }
     public void Submit(byte[] source) {
         if(!enabled)return;
-        if(source.Length!=bytes)throw new ArgumentException("Preview source size changed");
+        int len=source.Length;
+        if(len!=bytes && len!=nv12Bytes)throw new ArgumentException("Preview source size changed");
         lock(gate) {
             if(disposed||!enabled)return;
-            first??=new byte[bytes];second??=new byte[bytes];
+            if(first==null||first.Length!=len) first=new byte[len];
+            if(second==null||second.Length!=len) second=new byte[len];
             var target=ReferenceEquals(processing,first)?second:first;
             if(pending!=null)Interlocked.Increment(ref dropped);
-            Buffer.BlockCopy(source,0,target,0,bytes);
+            Buffer.BlockCopy(source,0,target,0,len);
             pending=target;ready.Set();
         }
     }
@@ -44,7 +46,9 @@ public sealed class LatestFramePreview : IAsyncDisposable {
                 if(source==null)continue;
                 try {
                     if(enabled) {
-                        var preview=sampler.Sample(source,width,height,previewWidth,previewHeight);
+                        var preview=source.Length==nv12Bytes
+                            ? sampler.SampleNv12(source,width,height,previewWidth,previewHeight)
+                            : sampler.Sample(source,width,height,previewWidth,previewHeight);
                         if(enabled)output(preview,previewWidth,previewHeight);
                     }
                 } catch(Exception ex) {

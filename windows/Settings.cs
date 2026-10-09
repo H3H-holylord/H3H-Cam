@@ -106,9 +106,11 @@ public sealed class Settings {
     public (int Width, int Height) FinalOutputDimensions =>
         SuperResolution4K ? ((OutputDimensions.Width < OutputDimensions.Height) ? (2160, 3840) : (3840, 2160)) : OutputDimensions;
 
-    public string BuildVideoFilter(int targetWidth, int targetHeight) {
+    public string BuildVideoFilter(int targetWidth, int targetHeight, bool nv12Limited601 = false) {
         if (targetWidth <= 0 || targetHeight <= 0) throw new ArgumentOutOfRangeException(nameof(targetWidth));
         var filters = new List<string>();
+        // Raw pipes carry no color metadata; CPU/GPU NV12 converters use limited BT.601.
+        var nv12Color = nv12Limited601 ? ":out_color_matrix=bt601:out_range=tv" : "";
         if (PrivacyMute) {
             filters.Add("drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill");
         }
@@ -124,11 +126,11 @@ public sealed class Settings {
             // Even dimensions are required for chroma-subsampled video.
             filters.Add("crop=w='trunc(min(iw,ih*9/16)/2)*2':h='trunc(min(ih,iw*16/9)/2)*2'");
         } else if (OrientationMode == "9:16_fit") {
-            filters.Add($"scale={targetWidth}:{targetHeight}:force_original_aspect_ratio=decrease,pad={targetWidth}:{targetHeight}:(ow-iw)/2:(oh-ih)/2");
+            filters.Add($"scale={targetWidth}:{targetHeight}:force_original_aspect_ratio=decrease{nv12Color},pad={targetWidth}:{targetHeight}:(ow-iw)/2:(oh-ih)/2");
             return string.Join(",", filters);
         }
 
-        filters.Add($"scale={targetWidth}:{targetHeight}:flags=fast_bilinear");
+        filters.Add($"scale={targetWidth}:{targetHeight}:flags=fast_bilinear{nv12Color}");
         return string.Join(",", filters);
     }
 

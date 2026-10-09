@@ -29,6 +29,13 @@ internal static class PerformanceTests {
                 if (!input.AsSpan().SequenceEqual(expected)) throw new Exception("In-place color differs: "+profile);
             }
         }
+        byte[] testNv12Src = new byte[64 * 36 * 3 / 2];
+        Array.Fill(testNv12Src, (byte)128);
+        byte[] testNv12Dst = new byte[128 * 72 * 3 / 2];
+        SuperResolutionEngine.UpscaleNv12(testNv12Src, 64, 36, testNv12Dst, 128, 72, 0.25f);
+        if (testNv12Dst[0] != 128 || testNv12Dst[^1] != 128) throw new Exception("UpscaleNv12 uniform value mismatch");
+        Console.WriteLine("PASS SuperResolutionEngine · UpscaleNv12 Y/UV 64x36 -> 128x72");
+        Nv12Tests.Run();
         Console.WriteLine("PASS color LUT · profiles/WB/sliders · exact bytes · in-place · saturation fallback");
         Console.WriteLine("PASS NV12 · identical Y/UV, SIMD tail, 2x2 and 1080p");
     }

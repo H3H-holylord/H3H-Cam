@@ -40,10 +40,7 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
     private var textureId = 0
     private var closed = false
     private var faceDetectionRunning = false
-    private var lastFaceUpdateMs = 0L
     private var lastFaceProcessMs = 0L
-    private var lastFocusCenterX = 0
-    private var lastFocusCenterY = 0
     private var cropRectLoc = -1
     private var cameraLoc = -1
     private var transformLoc = -1
@@ -171,24 +168,8 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
                                 }
                             }
 
-                            if (activeSettings?.faceTracking == true && now - lastFaceUpdateMs >= 2000) {
-                                val primary = validFaces.maxByOrNull { it.score } ?: validFaces[0]
-                                val fX = primary.rect.centerX()
-                                val fY = primary.rect.centerY()
-                                val moved = Math.abs(fX - lastFocusCenterX) > 150 || Math.abs(fY - lastFocusCenterY) > 150
-                                if (moved) {
-                                    lastFaceUpdateMs = now
-                                    lastFocusCenterX = fX
-                                    lastFocusCenterY = fY
-                                    try {
-                                        val cp = cam.parameters
-                                        val area = listOf(Camera.Area(primary.rect, 1000))
-                                        if (cp.maxNumFocusAreas > 0) cp.focusAreas = area
-                                        if (cp.maxNumMeteringAreas > 0 && !lockAeAwb) cp.meteringAreas = area
-                                        cam.parameters = cp
-                                    } catch (_: Exception) {}
-                                }
-                            }
+                            // Continuous video focus tracks focus smoothly without freezing ISP registers.
+                            // Tap-to-focus remains available for explicit manual touch focus.
                         } else {
                             faceCount = 0
                         }
@@ -583,7 +564,7 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
             GLES20.glEnableVertexAttribArray(posLoc); GLES20.glEnableVertexAttribArray(uvLoc)
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
             val rawPts = t.timestamp
-            val pts = if (rawPts > lastEglPtsNs) rawPts else (lastEglPtsNs + 1_000_000L)
+            val pts = CaptureTimestamp.next(rawPts,lastEglPtsNs)
             lastEglPtsNs = pts
             check(EGLExt.eglPresentationTimeANDROID(display, window, pts))
             check(EGL14.eglSwapBuffers(display, window)) { "EGL swap" }

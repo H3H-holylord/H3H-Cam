@@ -68,15 +68,23 @@ public sealed unsafe class SpoutSender : IDisposable {
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct SuperResConstants {
+    private struct VideoShaderConstants {
         public float SrcW;
         public float SrcH;
         public float InvDstW;
         public float InvDstH;
         public float Sharpness;
+        public int Rotation;
+        public int FlipH;
+        public int ColorProfile;
+        public float WbR;
+        public float WbG;
+        public float WbB;
+        public float Brightness;
+        public float Contrast;
+        public float Saturation;
         public float Pad0;
         public float Pad1;
-        public float Pad2;
     }
 
     [DllImport("d3d11.dll", CallingConvention = CallingConvention.StdCall)]
@@ -146,7 +154,7 @@ float4 PSMain(VSOutput input) : SV_Target {
     float2 uv = input.uv;
     int maxW = (int)srcSize.x - 1;
     int maxH = (int)srcSize.y - 1;
-    
+
     float2 coord = uv * srcSize - 0.5f;
     int x0 = (int)floor(coord.x);
     int y0 = (int)floor(coord.y);
@@ -154,31 +162,180 @@ float4 PSMain(VSOutput input) : SV_Target {
     float fy = coord.y - (float)y0;
     int x1 = x0 + 1;
     int y1 = y0 + 1;
-    
+
     float4 s00 = SampleSrc(x0, y0, maxW, maxH);
     float4 s10 = SampleSrc(x1, y0, maxW, maxH);
     float4 s01 = SampleSrc(x0, y1, maxW, maxH);
     float4 s11 = SampleSrc(x1, y1, maxW, maxH);
-    
+
     float4 center = lerp(lerp(s00, s10, fx), lerp(s01, s11, fx), fy);
-    
+
     if (sharpness <= 0.001f) {
         return center;
     }
-    
+
     float4 top    = SampleSrc(x0, y0 - 1, maxW, maxH);
     float4 bottom = SampleSrc(x0, y1 + 1, maxW, maxH);
     float4 left   = SampleSrc(x0 - 1, y0, maxW, maxH);
     float4 right  = SampleSrc(x1 + 1, y0, maxW, maxH);
-    
+
     float4 minCol = min(center, min(min(top, bottom), min(left, right)));
     float4 maxCol = max(center, max(max(top, bottom), max(left, right)));
-    
+
     float4 laplacian = 4.0f * center - (top + bottom + left + right);
     float4 sharp = center + laplacian * sharpness;
     sharp = clamp(sharp, minCol, maxCol);
     sharp.a = center.a;
     return sharp;
+}
+";
+
+    private const string Nv12VsSource = @"
+cbuffer VideoShaderConstants : register(b0) {
+    float2 srcSize;
+    float2 invDstSize;
+    float sharpness;
+    int rotation;
+    int flipH;
+    int colorProfile;
+    float wbR;
+    float wbG;
+    float wbB;
+    float brightness;
+    float contrast;
+    float saturation;
+    float pad0;
+    float pad1;
+};
+
+struct VSOutput {
+    float4 pos : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+VSOutput VSMain(uint id : SV_VertexID) {
+    VSOutput output;
+    float2 uv = float2((id << 1) & 2, id & 2);
+    output.pos = float4(uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 0.0f, 1.0f);
+    if (flipH) uv.x = 1.0f - uv.x;
+    if (rotation == 90) uv = float2(1.0f - uv.y, uv.x);
+    else if (rotation == 180) uv = float2(1.0f - uv.x, 1.0f - uv.y);
+    else if (rotation == 270) uv = float2(uv.y, 1.0f - uv.x);
+    output.uv = uv;
+    return output;
+}
+";
+
+    private const string Nv12PsSource = @"
+cbuffer VideoShaderConstants : register(b0) {
+    float2 srcSize;
+    float2 invDstSize;
+    float sharpness;
+    int rotation;
+    int flipH;
+    int colorProfile;
+    float wbR;
+    float wbG;
+    float wbB;
+    float brightness;
+    float contrast;
+    float saturation;
+    float pad0;
+    float pad1;
+};
+
+struct VSOutput {
+    float4 pos : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+Texture2D<float> texY : register(t0);
+Texture2D<float2> texUV : register(t1);
+
+float3 SampleYuvPixel(int x, int y, int maxW, int maxH) {
+    int cx = clamp(x, 0, maxW);
+    int cy = clamp(y, 0, maxH);
+    float yVal = texY.Load(int3(cx, cy, 0));
+    float2 chroma = texUV.Load(int3(cx >> 1, cy >> 1, 0));
+    float c = max(0.0f, yVal - (16.0f / 255.0f));
+    float u = chroma.x - (128.0f / 255.0f);
+    float v = chroma.y - (128.0f / 255.0f);
+    float r = 1.164383f * c + 1.596027f * v;
+    float g = 1.164383f * c - 0.391762f * u - 0.812968f * v;
+    float b = 1.164383f * c + 2.017232f * u;
+    return saturate(float3(r, g, b));
+}
+
+float4 Nv12PSMain(VSOutput input) : SV_Target {
+    float2 uv = input.uv;
+    int maxW = (int)srcSize.x - 1;
+    int maxH = (int)srcSize.y - 1;
+
+    float2 coord = uv * srcSize - 0.5f;
+    int x0 = (int)floor(coord.x);
+    int y0 = (int)floor(coord.y);
+    float fx = coord.x - (float)x0;
+    float fy = coord.y - (float)y0;
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+
+    float3 s00 = SampleYuvPixel(x0, y0, maxW, maxH);
+    float3 s10 = SampleYuvPixel(x1, y0, maxW, maxH);
+    float3 s01 = SampleYuvPixel(x0, y1, maxW, maxH);
+    float3 s11 = SampleYuvPixel(x1, y1, maxW, maxH);
+
+    float3 center = lerp(lerp(s00, s10, fx), lerp(s01, s11, fx), fy);
+
+    if (sharpness > 0.001f) {
+        float3 top    = SampleYuvPixel(x0, y0 - 1, maxW, maxH);
+        float3 bottom = SampleYuvPixel(x0, y0 + 1, maxW, maxH);
+        float3 left   = SampleYuvPixel(x0 - 1, y0, maxW, maxH);
+        float3 right  = SampleYuvPixel(x0 + 1, y0, maxW, maxH);
+
+        float3 minCol = min(center, min(min(top, bottom), min(left, right)));
+        float3 maxCol = max(center, max(max(top, bottom), max(left, right)));
+        float3 laplacian = 4.0f * center - (top + bottom + left + right);
+        center = clamp(center + laplacian * sharpness, minCol, maxCol);
+    }
+
+    if (abs(wbR - 1.0f) > 0.005f || abs(wbG - 1.0f) > 0.005f || abs(wbB - 1.0f) > 0.005f) {
+        center.r = saturate(center.r * wbR);
+        center.g = saturate(center.g * wbG);
+        center.b = saturate(center.b * wbB);
+    }
+
+    if (colorProfile == 1) { // Clean
+        center = (center - (128.0f / 255.0f)) * 1.06f + (128.0f / 255.0f);
+        center *= float3(1.02f, 1.01f, 1.03f);
+    } else if (colorProfile == 2) { // Warm
+        center = center * float3(1.10f, 1.03f, 0.88f) + float3(6.0f, 2.0f, -4.0f) / 255.0f;
+    } else if (colorProfile == 3) { // Cold
+        center = center * float3(0.88f, 0.98f, 1.14f) + float3(-4.0f, 0.0f, 8.0f) / 255.0f;
+    } else if (colorProfile == 4) { // Teal & Orange
+        float lum = dot(center, float3(0.299f, 0.587f, 0.114f)) * 255.0f;
+        if (lum < 128.0f) {
+            center += float3(-18.0f, 6.0f, 22.0f) * ((128.0f - lum) / 128.0f) / 255.0f;
+        } else {
+            center += float3(22.0f, 8.0f, -18.0f) * ((lum - 128.0f) / 127.0f) / 255.0f;
+        }
+        center = (center - (128.0f / 255.0f)) * float3(1.10f, 1.06f, 1.10f) + (128.0f / 255.0f);
+    } else if (colorProfile == 5) { // Monochrome Noir
+        float gray = dot(center, float3(0.299f, 0.587f, 0.114f));
+        center = (gray - (128.0f / 255.0f)) * 1.25f + (128.0f / 255.0f);
+    }
+
+    if (abs(brightness) > 0.001f) {
+        center += brightness;
+    }
+    if (abs(contrast - 1.0f) > 0.001f) {
+        center = (center - (128.0f / 255.0f)) * contrast + (128.0f / 255.0f);
+    }
+    if (abs(saturation - 1.0f) > 0.001f && colorProfile != 5) {
+        float luma = dot(center, float3(0.299f, 0.587f, 0.114f));
+        center = lerp(float3(luma, luma, luma), center, saturation);
+    }
+
+    return float4(saturate(center), 1.0f);
 }
 ";
 
@@ -199,11 +356,22 @@ float4 PSMain(VSOutput input) : SV_Target {
     private IntPtr sourceSrv = IntPtr.Zero;
     private int currentSrcWidth;
     private int currentSrcHeight;
-    private IntPtr samplerState = IntPtr.Zero;
     private IntPtr constantBuffer = IntPtr.Zero;
     private IntPtr vertexShader = IntPtr.Zero;
     private IntPtr pixelShader = IntPtr.Zero;
     private bool gpuSuperResReady = false;
+
+    // Direct GPU NV12 Pipeline Resources
+    private IntPtr sourceTextureY = IntPtr.Zero;
+    private IntPtr sourceSrvY = IntPtr.Zero;
+    private IntPtr sourceTextureUV = IntPtr.Zero;
+    private IntPtr sourceSrvUV = IntPtr.Zero;
+    private int currentNv12SrcWidth;
+    private int currentNv12SrcHeight;
+    private IntPtr nv12VertexShader = IntPtr.Zero;
+    private IntPtr nv12PixelShader = IntPtr.Zero;
+    private bool gpuNv12Ready = false;
+    public bool GpuNv12Ready => gpuNv12Ready;
 
     private MemoryMappedFile? senderNamesMap;
     private MemoryMappedViewAccessor? senderNamesAccessor;
@@ -328,9 +496,9 @@ float4 PSMain(VSOutput input) : SV_Target {
                 Marshal.Release(psBlob);
             }
 
-            // 3. Constant Buffer (32 bytes aligned to 16 bytes)
+            // 3. Constant Buffer (64 bytes aligned to 16 bytes)
             var cbDesc = new D3D11_BUFFER_DESC {
-                ByteWidth = (uint)sizeof(SuperResConstants),
+                ByteWidth = (uint)sizeof(VideoShaderConstants),
                 Usage = 0, // D3D11_USAGE_DEFAULT
                 BindFlags = 4, // D3D11_BIND_CONSTANT_BUFFER
                 CPUAccessFlags = 0,
@@ -342,8 +510,40 @@ float4 PSMain(VSOutput input) : SV_Target {
             if (hrCb != 0 || constantBuffer == IntPtr.Zero) return;
 
             gpuSuperResReady = true;
+
+            // 4. Direct GPU NV12 Shaders
+            try {
+                IntPtr nv12VsBlob = CompileShader(Nv12VsSource, "VSMain", "vs_5_0");
+                try {
+                    IntPtr* blobVtbl = *(IntPtr**)nv12VsBlob;
+                    var getPtr = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr>)blobVtbl[3];
+                    var getSize = (delegate* unmanaged[Stdcall]<IntPtr, UIntPtr>)blobVtbl[4];
+                    var createVs = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, UIntPtr, IntPtr, out IntPtr, int>)devVtbl[12];
+                    int hr = createVs(device, getPtr(nv12VsBlob), getSize(nv12VsBlob), IntPtr.Zero, out nv12VertexShader);
+                    if (hr != 0) nv12VertexShader = IntPtr.Zero;
+                } finally {
+                    Marshal.Release(nv12VsBlob);
+                }
+
+                IntPtr nv12PsBlob = CompileShader(Nv12PsSource, "Nv12PSMain", "ps_5_0");
+                try {
+                    IntPtr* blobVtbl = *(IntPtr**)nv12PsBlob;
+                    var getPtr = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr>)blobVtbl[3];
+                    var getSize = (delegate* unmanaged[Stdcall]<IntPtr, UIntPtr>)blobVtbl[4];
+                    var createPs = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, UIntPtr, IntPtr, out IntPtr, int>)devVtbl[15];
+                    int hr = createPs(device, getPtr(nv12PsBlob), getSize(nv12PsBlob), IntPtr.Zero, out nv12PixelShader);
+                    if (hr != 0) nv12PixelShader = IntPtr.Zero;
+                } finally {
+                    Marshal.Release(nv12PsBlob);
+                }
+
+                gpuNv12Ready = nv12VertexShader != IntPtr.Zero && nv12PixelShader != IntPtr.Zero;
+            } catch {
+                gpuNv12Ready = false;
+            }
         } catch {
             gpuSuperResReady = false;
+            gpuNv12Ready = false;
         }
     }
 
@@ -436,13 +636,15 @@ float4 PSMain(VSOutput input) : SV_Target {
             // BGRA format
             UploadBgra(frame, srcW, srcH, sharpness);
         } else if (frame.Length >= srcW * srcH * 3 / 2) {
-            // NV12 format -> convert to BGRA buffer
-            int neededBgra = srcW * srcH * 4;
-            if (bgraBuffer.Length < neededBgra) {
-                bgraBuffer = new byte[neededBgra];
+            // NV12 format -> direct GPU pipeline
+            if (gpuNv12Ready) {
+                RenderNv12OnGpu(frame, srcW, srcH, sharpness, 0, false, "none", 0.0, 1.0, 1.0, 1.0f, 1.0f, 1.0f);
+            } else {
+                int neededBgra = srcW * srcH * 4;
+                if (bgraBuffer.Length < neededBgra) bgraBuffer = new byte[neededBgra];
+                Nv12ToBgra(frame, bgraBuffer, srcW, srcH);
+                UploadBgra(bgraBuffer, srcW, srcH, sharpness);
             }
-            Nv12ToBgra(frame, bgraBuffer, srcW, srcH);
-            UploadBgra(bgraBuffer, srcW, srcH, sharpness);
         }
     }
 
@@ -465,6 +667,54 @@ float4 PSMain(VSOutput input) : SV_Target {
         var query=frameQueries[(queryHead+pendingQueries)%frameQueries.Length];
         ((delegate* unmanaged[Stdcall]<IntPtr,IntPtr,void>)ctx[28])(context,query);
         ((delegate* unmanaged[Stdcall]<IntPtr,void>)ctx[111])(context);
+        pendingQueries++;
+        Interlocked.Increment(ref publishedFrames);
+        return true;
+    }
+
+    /// <summary>Uploads CPU NV12 planes and renders GPU color/upscale into the shared texture.
+    /// Rotation/mirror parameters are for untransformed frames; the receiver passes 0/false.</summary>
+    public bool TryWriteNv12Frame(
+        byte[] nv12,
+        int srcW,
+        int srcH,
+        float sharpness = 0.20f,
+        int rotation = 0,
+        bool flipH = false,
+        string colorProfile = "none",
+        double brightness = 0.0,
+        double contrast = 1.0,
+        double saturation = 1.0,
+        float wbR = 1.0f,
+        float wbG = 1.0f,
+        float wbB = 1.0f) {
+
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if(srcW<2 || srcH<2 || ((srcW|srcH)&1)!=0 || nv12.Length < checked(srcW * srcH * 3 / 2))
+            throw new ArgumentException("NV12 needs complete planes and even dimensions");
+        var ctx = *(IntPtr**)context;
+        while (pendingQueries > 0) {
+            int complete = 0;
+            int hr = ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, uint, uint, int>)ctx[29])(context, frameQueries[queryHead], (IntPtr)(&complete), 4, 0);
+            if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+            if (hr == 1 || complete == 0) break;
+            queryHead = (queryHead + 1) % frameQueries.Length;
+            pendingQueries--;
+        }
+        if (pendingQueries == frameQueries.Length) { Interlocked.Increment(ref gpuDroppedFrames); return false; }
+
+        if (gpuNv12Ready) {
+            RenderNv12OnGpu(nv12, srcW, srcH, sharpness, rotation, flipH, colorProfile, brightness, contrast, saturation, wbR, wbG, wbB);
+        } else {
+            int neededBgra = srcW * srcH * 4;
+            if (bgraBuffer.Length < neededBgra) bgraBuffer = new byte[neededBgra];
+            Nv12ToBgra(nv12, bgraBuffer, srcW, srcH);
+            UploadBgra(bgraBuffer, srcW, srcH, sharpness, flush: false);
+        }
+
+        var query = frameQueries[(queryHead + pendingQueries) % frameQueries.Length];
+        ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, void>)ctx[28])(context, query);
+        ((delegate* unmanaged[Stdcall]<IntPtr, void>)ctx[111])(context);
         pendingQueries++;
         Interlocked.Increment(ref publishedFrames);
         return true;
@@ -554,14 +804,19 @@ float4 PSMain(VSOutput input) : SV_Target {
         }
 
         // 2. Update Constant Buffer
-        var cbData = new SuperResConstants {
+        var cbData = new VideoShaderConstants {
             SrcW = (float)srcW,
             SrcH = (float)srcH,
             InvDstW = 1.0f / width,
             InvDstH = 1.0f / height,
-            Sharpness = Math.Clamp(sharpness, 0.0f, 0.60f)
+            Sharpness = Math.Clamp(sharpness, 0.0f, 0.60f),
+            WbR = 1.0f,
+            WbG = 1.0f,
+            WbB = 1.0f,
+            Contrast = 1.0f,
+            Saturation = 1.0f
         };
-        updateSubresource(context, constantBuffer, 0, IntPtr.Zero, (IntPtr)(&cbData), (uint)sizeof(SuperResConstants), 0);
+        updateSubresource(context, constantBuffer, 0, IntPtr.Zero, (IntPtr)(&cbData), (uint)sizeof(VideoShaderConstants), 0);
 
         // 3. Set Viewport to 4K destination
         var vp = new D3D11_VIEWPORT {
@@ -609,6 +864,166 @@ float4 PSMain(VSOutput input) : SV_Target {
         IntPtr nullPtr = IntPtr.Zero;
         omSetRenderTargets(context, 0, null, IntPtr.Zero);
         psSetShaderResources(context, 0, 1, &nullPtr);
+    }
+
+    private void EnsureSourceNv12Textures(int srcW, int srcH) {
+        if (sourceTextureY != IntPtr.Zero && sourceTextureUV != IntPtr.Zero &&
+            currentNv12SrcWidth == srcW && currentNv12SrcHeight == srcH)
+            return;
+
+        if (sourceSrvY != IntPtr.Zero) { Marshal.Release(sourceSrvY); sourceSrvY = IntPtr.Zero; }
+        if (sourceTextureY != IntPtr.Zero) { Marshal.Release(sourceTextureY); sourceTextureY = IntPtr.Zero; }
+        if (sourceSrvUV != IntPtr.Zero) { Marshal.Release(sourceSrvUV); sourceSrvUV = IntPtr.Zero; }
+        if (sourceTextureUV != IntPtr.Zero) { Marshal.Release(sourceTextureUV); sourceTextureUV = IntPtr.Zero; }
+
+        currentNv12SrcWidth = srcW;
+        currentNv12SrcHeight = srcH;
+
+        IntPtr* devVtbl = *(IntPtr**)device;
+        var createTexture2D = (delegate* unmanaged[Stdcall]<IntPtr, in D3D11_TEXTURE2D_DESC, IntPtr, out IntPtr, int>)devVtbl[5];
+        var createSrv = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, out IntPtr, int>)devVtbl[7];
+
+        // 1. Plane Y (DXGI_FORMAT_R8_UNORM = 61)
+        var descY = new D3D11_TEXTURE2D_DESC {
+            Width = (uint)srcW,
+            Height = (uint)srcH,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = 61,
+            SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+            Usage = 0,
+            BindFlags = 8,
+            CPUAccessFlags = 0,
+            MiscFlags = 0
+        };
+        int hr = createTexture2D(device, in descY, IntPtr.Zero, out sourceTextureY);
+        if (hr != 0 || sourceTextureY == IntPtr.Zero)
+            throw new InvalidOperationException($"CreateTexture2D for sourceTextureY failed: 0x{hr:X8}");
+        hr = createSrv(device, sourceTextureY, IntPtr.Zero, out sourceSrvY);
+        if (hr != 0 || sourceSrvY == IntPtr.Zero)
+            throw new InvalidOperationException($"CreateShaderResourceView for sourceSrvY failed: 0x{hr:X8}");
+
+        // 2. Plane UV (DXGI_FORMAT_R8G8_UNORM = 49)
+        var descUV = new D3D11_TEXTURE2D_DESC {
+            Width = (uint)(srcW / 2),
+            Height = (uint)(srcH / 2),
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = 49,
+            SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+            Usage = 0,
+            BindFlags = 8,
+            CPUAccessFlags = 0,
+            MiscFlags = 0
+        };
+        hr = createTexture2D(device, in descUV, IntPtr.Zero, out sourceTextureUV);
+        if (hr != 0 || sourceTextureUV == IntPtr.Zero)
+            throw new InvalidOperationException($"CreateTexture2D for sourceTextureUV failed: 0x{hr:X8}");
+        hr = createSrv(device, sourceTextureUV, IntPtr.Zero, out sourceSrvUV);
+        if (hr != 0 || sourceSrvUV == IntPtr.Zero)
+            throw new InvalidOperationException($"CreateShaderResourceView for sourceSrvUV failed: 0x{hr:X8}");
+    }
+
+    private void RenderNv12OnGpu(
+        byte[] nv12,
+        int srcW,
+        int srcH,
+        float sharpness,
+        int rotation,
+        bool flipH,
+        string profile,
+        double brightness,
+        double contrast,
+        double saturation,
+        float wbR,
+        float wbG,
+        float wbB) {
+
+        EnsureSourceNv12Textures(srcW, srcH);
+
+        IntPtr* ctxVtbl = *(IntPtr**)context;
+        var updateSubresource = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, uint, IntPtr, IntPtr, uint, uint, void>)ctxVtbl[48];
+
+        fixed (byte* pSrc = nv12) {
+            updateSubresource(context, sourceTextureY, 0, IntPtr.Zero, (IntPtr)pSrc, (uint)srcW, 0);
+            updateSubresource(context, sourceTextureUV, 0, IntPtr.Zero, (IntPtr)(pSrc + srcW * srcH), (uint)srcW, 0);
+        }
+
+        int profileId = profile switch {
+            "clean" => 1,
+            "warm" => 2,
+            "cold" => 3,
+            "teal_orange" => 4,
+            "noir" => 5,
+            _ => 0
+        };
+
+        var cbData = new VideoShaderConstants {
+            SrcW = (float)srcW,
+            SrcH = (float)srcH,
+            InvDstW = 1.0f / width,
+            InvDstH = 1.0f / height,
+            Sharpness = Math.Clamp(sharpness, 0.0f, 0.60f),
+            Rotation = rotation,
+            FlipH = flipH ? 1 : 0,
+            ColorProfile = profileId,
+            WbR = wbR,
+            WbG = wbG,
+            WbB = wbB,
+            Brightness = (float)brightness,
+            Contrast = (float)contrast,
+            Saturation = (float)saturation
+        };
+        updateSubresource(context, constantBuffer, 0, IntPtr.Zero, (IntPtr)(&cbData), (uint)sizeof(VideoShaderConstants), 0);
+
+        var vp = new D3D11_VIEWPORT {
+            TopLeftX = 0,
+            TopLeftY = 0,
+            Width = width,
+            Height = height,
+            MinDepth = 0.0f,
+            MaxDepth = 1.0f
+        };
+        var rsSetViewports = (delegate* unmanaged[Stdcall]<IntPtr, uint, in D3D11_VIEWPORT, void>)ctxVtbl[44];
+        rsSetViewports(context, 1, in vp);
+
+        var omSetRenderTargets = (delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr*, IntPtr, void>)ctxVtbl[33];
+        IntPtr rtv = renderTargetView;
+        omSetRenderTargets(context, 1, &rtv, IntPtr.Zero);
+
+        var iaSetPrimitiveTopology = (delegate* unmanaged[Stdcall]<IntPtr, uint, void>)ctxVtbl[24];
+        iaSetPrimitiveTopology(context, 4); // D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+
+        var iaSetInputLayout = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, void>)ctxVtbl[17];
+        iaSetInputLayout(context, IntPtr.Zero);
+
+        var vsSetShader = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr*, uint, void>)ctxVtbl[11];
+        vsSetShader(context, nv12VertexShader, null, 0);
+
+        var psSetShader = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr*, uint, void>)ctxVtbl[9];
+        psSetShader(context, nv12PixelShader, null, 0);
+
+        var psSetConstantBuffers = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, IntPtr*, void>)ctxVtbl[16];
+        var vsSetConstantBuffers = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, IntPtr*, void>)ctxVtbl[7];
+        IntPtr cb = constantBuffer;
+        vsSetConstantBuffers(context, 0, 1, &cb);
+        psSetConstantBuffers(context, 0, 1, &cb);
+
+        var psSetShaderResources = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, IntPtr*, void>)ctxVtbl[8];
+        IntPtr* srvs = stackalloc IntPtr[2];
+        srvs[0] = sourceSrvY;
+        srvs[1] = sourceSrvUV;
+        psSetShaderResources(context, 0, 2, srvs);
+
+        var draw = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, void>)ctxVtbl[13];
+        draw(context, 3, 0);
+
+        IntPtr nullPtr = IntPtr.Zero;
+        IntPtr* nullSrvs = stackalloc IntPtr[2];
+        nullSrvs[0] = IntPtr.Zero;
+        nullSrvs[1] = IntPtr.Zero;
+        omSetRenderTargets(context, 0, null, IntPtr.Zero);
+        psSetShaderResources(context, 0, 2, nullSrvs);
     }
 
     public static void Nv12ToBgra(byte[] nv12, byte[] bgra, int w, int h) {
@@ -667,10 +1082,6 @@ float4 PSMain(VSOutput input) : SV_Target {
             Marshal.Release(constantBuffer);
             constantBuffer = IntPtr.Zero;
         }
-        if (samplerState != IntPtr.Zero) {
-            Marshal.Release(samplerState);
-            samplerState = IntPtr.Zero;
-        }
         if (pixelShader != IntPtr.Zero) {
             Marshal.Release(pixelShader);
             pixelShader = IntPtr.Zero;
@@ -679,6 +1090,14 @@ float4 PSMain(VSOutput input) : SV_Target {
             Marshal.Release(vertexShader);
             vertexShader = IntPtr.Zero;
         }
+        if (nv12PixelShader != IntPtr.Zero) {
+            Marshal.Release(nv12PixelShader);
+            nv12PixelShader = IntPtr.Zero;
+        }
+        if (nv12VertexShader != IntPtr.Zero) {
+            Marshal.Release(nv12VertexShader);
+            nv12VertexShader = IntPtr.Zero;
+        }
         if (sourceSrv != IntPtr.Zero) {
             Marshal.Release(sourceSrv);
             sourceSrv = IntPtr.Zero;
@@ -686,6 +1105,22 @@ float4 PSMain(VSOutput input) : SV_Target {
         if (sourceTexture != IntPtr.Zero) {
             Marshal.Release(sourceTexture);
             sourceTexture = IntPtr.Zero;
+        }
+        if (sourceSrvY != IntPtr.Zero) {
+            Marshal.Release(sourceSrvY);
+            sourceSrvY = IntPtr.Zero;
+        }
+        if (sourceTextureY != IntPtr.Zero) {
+            Marshal.Release(sourceTextureY);
+            sourceTextureY = IntPtr.Zero;
+        }
+        if (sourceSrvUV != IntPtr.Zero) {
+            Marshal.Release(sourceSrvUV);
+            sourceSrvUV = IntPtr.Zero;
+        }
+        if (sourceTextureUV != IntPtr.Zero) {
+            Marshal.Release(sourceTextureUV);
+            sourceTextureUV = IntPtr.Zero;
         }
         if (renderTargetView != IntPtr.Zero) {
             Marshal.Release(renderTargetView);

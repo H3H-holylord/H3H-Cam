@@ -191,6 +191,8 @@ internal static class Program {
         if (args.Length == 0) throw new ArgumentException(
             "Commands: unit [folder] | probe <auto|usb|wifi> [serial] | stream <usb|wifi> <folder> [serial] [seconds]");
         switch (args[0]) {
+            case "gpu-video-test":
+                await GpuVideoTests.Run(args[1]);return;
             case "gpu-queue-test":
                 using(var sender=new SpoutSender("H3HCamGpuQueueTest",1920,1080)) {
                     var pixels=new byte[1920*1080*4];
@@ -200,7 +202,7 @@ internal static class Program {
                 }
                 return;
             case "stress-test":
-                await CameraStressTest.Run(args[1],int.Parse(args[2]),args.Length>3?int.Parse(args[3]):0);return;
+                await CameraStressTest.Run(args[1],int.Parse(args[2]),args.Length>3?int.Parse(args[3]):0,args.Contains("nv12"));return;
             case "watchdog-test":
                 await CameraStressTest.Watchdog();return;
             case "cpu-load":
@@ -1440,6 +1442,8 @@ internal static class Program {
         var s = Settings.Load().Clone();
         s.Transport="usb"; s.Preview=true; s.SpoutOutput=true; s.VirtualCamera=true; s.Obs=false;
         s.Width=1920; s.Height=1080; s.Fps=30; s.Codec="hevc";
+        s.ColorProfile="clean"; s.BackgroundEffect="none"; s.SkinSmoothing=false;
+        s.WbRedGain=s.WbGreenGain=s.WbBlueGain=1;
         long previews=0;
         int previewWidth=0, previewHeight=0;
         int DecoderCount() => System.Diagnostics.Process.GetProcessesByName("ffmpeg").Length;
@@ -1459,8 +1463,14 @@ internal static class Program {
             engine.SetPreviewEnabled(false); await Task.Delay(500,timeout.Token); paused=previews;
             await Task.Delay(1200,timeout.Token); Assert(previews==paused,"shared preview toggle off");
             engine.SetPreviewEnabled(true); await Settle(); Assert(previews>paused+20,"shared preview toggle on");
+            s.ColorProfile="none"; await engine.UpdateControls(s,timeout.Token); await Settle();
+            Assert(DecoderCount()==1 && engine.SpoutFrames>30,"RGB to GPU NV12 preserves live output");
+            s.WbRedGain=1.15f; await engine.UpdateControls(s,timeout.Token); await Settle();
+            Assert(DecoderCount()==1 && engine.SpoutFrames>30,"WB returns to compatible RGB for both outputs");
+            s.WbRedGain=1; s.ColorProfile="clean"; await engine.UpdateControls(s,timeout.Token); await Settle();
+            Assert(DecoderCount()==1 && engine.SpoutFrames>30,"color settings survive format transitions");
             s.SpoutOutput=false; await engine.UpdateControls(s,timeout.Token); await Settle();
-            Assert(DecoderCount()==2 && engine.PreviewProcessId!=null,"NV12 output keeps standalone preview fallback");
+            Assert(DecoderCount()==1 && engine.PreviewProcessId!=null,"NV12 output shares preview without a second decoder");
             s.VirtualCamera=false; await engine.UpdateControls(s,timeout.Token); await Settle();
             Assert(DecoderCount()==1,"preview alone survives output removal");
             s.SpoutOutput=true; s.VirtualCamera=true; s.Rotation=90;

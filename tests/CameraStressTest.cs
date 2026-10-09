@@ -11,7 +11,7 @@ internal static class CameraStressTest {
     private sealed record PhaseReport(string Phase, int RequestedFps, double Seconds, double OutputFps,
         double SpoutFps, long GpuSkipped, double OutputP99Ms, double OutputMaxGapMs,
         double PreviewFps, double PreviewP99Ms, double PreviewMaxGapMs, double CpuAverage, double? GpuAverage);
-    public static async Task Run(string root,int fps,int slowPreviewMs) {
+    public static async Task Run(string root,int fps,int slowPreviewMs,bool nv12=false) {
         Directory.CreateDirectory(root);
         using(var process=Process.GetCurrentProcess())Processes.PrioritizeVideo(process);
         var backup=File.ReadAllText(Settings.FilePath);
@@ -20,6 +20,11 @@ internal static class CameraStressTest {
         settings.Codec="hevc";settings.BitrateMbps=fps==60?32:20;
         settings.Preview=true;settings.SpoutOutput=true;settings.VirtualCamera=true;settings.Obs=false;
         settings.AdaptiveBitrate=false;settings.WifiLimitMbps=0;
+        if(nv12) {
+            settings.ColorProfile="none";settings.BackgroundEffect="none";settings.SkinSmoothing=false;
+            settings.WbRedGain=settings.WbGreenGain=settings.WbBlueGain=1;
+            settings.Brightness=0;settings.Contrast=settings.Saturation=1;
+        }
         var timer=Stopwatch.StartNew();var sync=new object();var previews=new List<double>();var outputs=new List<double>();int errors=0;
         await using var engine=new ReceiverEngine(settings,line=>{Console.WriteLine(line);if(line.Contains("Error constructing")||line.Contains("Could not find ref"))Interlocked.Increment(ref errors);});
         engine.PreviewFrame+=(_,_,_)=>{lock(sync)previews.Add(timer.Elapsed.TotalMilliseconds);if(slowPreviewMs>0)Thread.Sleep(slowPreviewMs);};
@@ -68,7 +73,7 @@ internal static class CameraStressTest {
             if(cpu.ExitCode!=0||gpu.ExitCode!=0)throw new Exception("Stress helper failed");
             reports.Add(await Phase("recovery",6));
             await engine.Stop();
-            await File.WriteAllTextAsync(Path.Combine(root,"stress.json"),JsonSerializer.Serialize(new {Fps=fps,SlowPreviewMs=slowPreviewMs,DecodeErrors=errors,Phases=reports},new JsonSerializerOptions{WriteIndented=true}));
+            await File.WriteAllTextAsync(Path.Combine(root,"stress.json"),JsonSerializer.Serialize(new {Fps=fps,SlowPreviewMs=slowPreviewMs,Nv12=nv12,DecodeErrors=errors,Phases=reports},new JsonSerializerOptions{WriteIndented=true}));
             if(errors>0)throw new Exception("Decode errors during stress");
             if(reports.Any(p=>p.OutputFps<fps*.95||p.SpoutFps<fps*.95||p.OutputP99Ms>100||p.OutputMaxGapMs>250))
                 throw new Exception("Output cadence failed: inspect stress.json (95% FPS / P99 100ms / max 250ms)");

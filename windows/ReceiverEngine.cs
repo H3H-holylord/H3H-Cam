@@ -182,7 +182,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                             oldSettings.PrivacyMute != nextSettings.PrivacyMute ||
                             oldSettings.OrientationMode != nextSettings.OrientationMode ||
                             oldSettings.SuperResolution4K != nextSettings.SuperResolution4K ||
-                            outputRoutingChanged;
+                            outputRoutingChanged || virtualCamera?.RequiresFormatChange(nextSettings)==true;
         settings = nextSettings.Clone();
         if (settings.PrivacyMute && recorder.IsRecording) StopRecording();
         // UI stores empty paths for automatic discovery; retain the resolved runtime paths.

@@ -39,4 +39,42 @@ public sealed class PreviewSampler {
         }
         return pixels;
     }
+
+    public unsafe byte[] SampleNv12(byte[] source, int width, int height, int targetWidth, int targetHeight) {
+        if (width < 2 || height < 2 || (width&1)!=0 || (height&1)!=0 || targetWidth < 1 || targetHeight < 1 ||
+            source.Length < checked(width*height*3/2))
+            throw new ArgumentException("Invalid preview dimensions/buffer");
+        int size = checked(targetWidth*targetHeight*4);
+        if (pixels == null || pixels.Length != size) pixels = new byte[size];
+
+        fixed (byte* src = source, dst = pixels) {
+            int uvOffset = width * height;
+            for (int y = 0; y < targetHeight; y++) {
+                int sy = Math.Clamp(y * height / targetHeight, 0, height - 1);
+                int yRow = sy * width;
+                int uvRow = uvOffset + (sy >> 1) * width;
+                int dstRow = y * targetWidth * 4;
+
+                for (int x = 0; x < targetWidth; x++) {
+                    int sx = Math.Clamp(x * width / targetWidth, 0, width - 1);
+                    int yVal = src[yRow + sx];
+                    int uvIdx = uvRow + (sx & ~1);
+                    int u = src[uvIdx] - 128;
+                    int v = src[uvIdx + 1] - 128;
+
+                    int c = Math.Max(0, yVal - 16);
+                    int r = (298 * c + 409 * v + 128) >> 8;
+                    int g = (298 * c - 100 * u - 208 * v + 128) >> 8;
+                    int b = (298 * c + 516 * u + 128) >> 8;
+
+                    int dIdx = dstRow + x * 4;
+                    dst[dIdx] = (byte)Math.Clamp(b, 0, 255);
+                    dst[dIdx + 1] = (byte)Math.Clamp(g, 0, 255);
+                    dst[dIdx + 2] = (byte)Math.Clamp(r, 0, 255);
+                    dst[dIdx + 3] = 255;
+                }
+            }
+        }
+        return pixels;
+    }
 }

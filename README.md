@@ -15,14 +15,15 @@
 - Foreground service, погашение экрана, переподключение, статистика FPS/битрейта и батареи.
 - Общий декодер для Spout2 и предпросмотра, пауза скрытого предпросмотра и ускоренная обработка цвета/NV12: [проверка CPU](docs/PERFORMANCE.md).
 - Отдельный видеопоток MMCSS Capture, независимый предпросмотр, ограниченная очередь Spout и восстановление зависшего декодера: [проверка под нагрузкой](docs/GAME-LOAD.md).
+- Исправлен повторный поворот изображения в OBS; проверены GPU-цвет, NV12 и обновление Antigravity: [отчёт 4.0.8](docs/ANTIGRAVITY-REVIEW-4.0.8.md).
 
 ## Скачать
 
 | Файл | Назначение |
 |---|---|
-| [Windows x64 ZIP](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.7/H3H-Cam-4.0.7-Windows-x64.zip) | Клиент 4.0.7, .NET runtime включён |
-| [Android APK](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.7/H3H-Cam-4.0.3.apk) | Android 4.0.3, Android 8+ |
-| [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.7/SHA256SUMS.txt) | Проверка скачанных файлов |
+| [Windows x64 ZIP](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.8/H3H-Cam-4.0.8-Windows-x64.zip) | Клиент 4.0.8, .NET runtime включён |
+| [Android APK](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.8/H3H-Cam-4.0.4.apk) | Android 4.0.4, Android 8+ |
+| [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.8/SHA256SUMS.txt) | Проверка скачанных файлов |
 
 FFmpeg/FFplay, ADB и OBS устанавливаются отдельно. Клиент ищет их автоматически или принимает указанные пути. AI-эффекты требуют дополнительных совместимых весов; модель не входит в публичный релиз.
 

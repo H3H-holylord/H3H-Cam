@@ -36,3 +36,5 @@ cd android
 Исходники — в main, бинарники — в Releases. Не коммитьте ключи, signing.properties, local.properties, AppData-настройки и личные логи. Локальный Create-Portable-Package.ps1 предназначен для личной полной сборки; публичный ZIP не включает FFmpeg/ADB/OBS и веса AI.
 
 Проверки производительности и аппаратного предпросмотра описаны в [PERFORMANCE.md](PERFORMANCE.md), нагрузочные проверки — в [GAME-LOAD.md](GAME-LOAD.md).
+
+Проверка обновления NV12/GPU и ориентации OBS: [ANTIGRAVITY-REVIEW-4.0.8.md](ANTIGRAVITY-REVIEW-4.0.8.md). GPU-тест требует Windows/D3D11 и FFmpeg с libx264; аппаратные тесты дополнительно требуют подключённого телефона. Запускайте нагрузочные тесты и измерения производительности последовательно.
