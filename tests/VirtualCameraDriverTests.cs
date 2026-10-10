@@ -48,6 +48,13 @@ internal static class VirtualCameraDriverTests {
                 var repaired = VirtualCameraDriver.InstallInto(classes, source + ".moved", stableDir, x64);
                 Check(VirtualCameraDriver.ReadRegistration(classes, x64).Ready, "repair restores camera enumeration metadata");
                 Check(File.Exists(repaired), "repair stores the DLL");
+                var corrupted = File.ReadAllBytes(repaired);
+                corrupted[^1] ^= 1; // Keep a valid PE header; detect damage beyond the architecture field.
+                File.WriteAllBytes(repaired, corrupted);
+                Check(!VirtualCameraDriver.ReadRegistration(classes, x64).Ready, "damaged cached binary must not show ready");
+                var recovered = VirtualCameraDriver.InstallInto(classes, source + ".moved", stableDir, x64);
+                Check(recovered != repaired, "repair avoids replacing a potentially loaded damaged DLL");
+                Check(VirtualCameraDriver.ReadRegistration(classes, x64).Ready, "repair of damaged cache succeeds");
             } finally {
                 // Only this test's random private registry subtree is changed or removed.
                 user.DeleteSubKeyTree(keyPath, throwOnMissingSubKey: false);

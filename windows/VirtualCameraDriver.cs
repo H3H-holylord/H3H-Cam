@@ -44,6 +44,19 @@ public static class VirtualCameraDriver {
         if (string.IsNullOrWhiteSpace(dll)) return new(false, name, dll, "Виртуальная камера не установлена");
         dll = Environment.ExpandEnvironmentVariables(dll.Trim('"'));
         if (!IsDriverBinary(dll, x64)) return new(false, name, dll, "Модуль камеры отсутствует или повреждён — требуется восстановление");
+        using var camera = classes.OpenSubKey($@"CLSID\{CameraClsid}");
+        if ((camera?.GetValue(null) as string)?.StartsWith("H3H Cam", StringComparison.Ordinal) == true) {
+            var folderHash = Path.GetFileName(Path.GetDirectoryName(dll))?.Split('-')[0];
+            if (folderHash?.Length == 16 && folderHash.All(Uri.IsHexDigit)) {
+                try {
+                    using var input = File.OpenRead(dll);
+                    if (!Convert.ToHexString(SHA256.HashData(input)).StartsWith(folderHash, StringComparison.OrdinalIgnoreCase))
+                        return new(false, name, dll, "Сохранённый модуль камеры повреждён — требуется восстановление");
+                } catch {
+                    return new(false, name, dll, "Не удалось прочитать модуль камеры — требуется восстановление");
+                }
+            }
+        }
         if (device?.GetValue("CLSID") is not string clsid || !clsid.Equals(CameraClsid, StringComparison.OrdinalIgnoreCase))
             return new(false, name, dll, "Камера не зарегистрирована в списке устройств — требуется восстановление");
         if (device.GetValue("FilterData") is not byte[] data || data.Length == 0)
@@ -85,12 +98,16 @@ public static class VirtualCameraDriver {
         Directory.CreateDirectory(targetDir);
         var target = Path.Combine(targetDir, Path.GetFileName(sourceDll));
         // Content-addressed paths also avoid replacing DLLs loaded by a video-call app.
-        if (!File.Exists(target)) File.Copy(sourceDll, target);
-        else {
+        if (File.Exists(target)) {
             using var input = File.OpenRead(target);
-            if (Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant() != hash)
-                throw new IOException("Сохранённый модуль камеры повреждён: " + target);
+            if (Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant() != hash) {
+                // Do not replace a DLL that another application may already have loaded.
+                targetDir = Path.Combine(installDir, hash[..16] + "-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(targetDir);
+                target = Path.Combine(targetDir, Path.GetFileName(sourceDll));
+            }
         }
+        if (!File.Exists(target)) File.Copy(sourceDll, target);
         using (var camera = userClasses.CreateSubKey($@"CLSID\{CameraClsid}")) {
             camera.SetValue(null, "H3H Cam (Virtual Camera)");
             using var server = camera.CreateSubKey("InprocServer32");
