@@ -1,4 +1,4 @@
-﻿param(
+param(
     [ValidateSet('All','Android','Windows','Test','Portable')][string]$Target = 'All',
     [string]$DotNet = '',
     [string]$JavaHome = ''
@@ -20,7 +20,7 @@ function Get-AndroidTool([string]$ToolName) {
 
 function Assert-ReleaseApk([string]$ApkPath) {
     if (-not (Test-Path $ApkPath)) { throw "Release APK not found: $ApkPath" }
-    
+
     $aapt = Get-AndroidTool 'aapt.exe'
     if (-not $aapt) { throw 'aapt.exe is required to verify a release APK' }
     if ($aapt) {
@@ -42,7 +42,7 @@ function Assert-ReleaseApk([string]$ApkPath) {
     } else {
         Write-Warning "aapt.exe not found for deep badging inspection."
     }
-    
+
     $apksigner = Get-AndroidTool 'apksigner.bat'
     if (-not $apksigner) { throw 'apksigner.bat is required to verify a release APK' }
     if ($apksigner) {
@@ -81,18 +81,18 @@ if ($Target -in @('All','Android')) {
         if (Test-Path -LiteralPath $s8Jbr) { $env:JAVA_HOME = $s8Jbr }
     }
     if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
-    
+
     Write-Host "Сборка Android Release APK (assembleRelease)..." -ForegroundColor Cyan
     & (Join-Path $s8Root 'android\gradlew.bat') -p (Join-Path $s8Root 'android') assembleRelease testDebugUnitTest --console=plain
     if ($LASTEXITCODE -ne 0) { throw 'Android build failed' }
-    
+
     $apkSource = Join-Path $s8Root 'android\app\build\outputs\apk\release\app-release.apk'
     if (-not (Test-Path $apkSource)) {
         throw "Release APK build failed: app-release.apk not found at $apkSource. Refusing to fallback to debug!"
     }
-    
+
     Assert-ReleaseApk $apkSource
-    
+
     Copy-Item -LiteralPath $apkSource -Destination (Join-Path $s8Dist 'H3H-Cam-4.0.4.apk') -Force
     Copy-Item -LiteralPath (Join-Path $s8Dist 'H3H-Cam-4.0.4.apk') -Destination (Join-Path $s8Root 'H3H-Cam-4.0.4.apk') -Force
     Write-Host "Android Release APK готов: $(Join-Path $s8Dist 'H3H-Cam-4.0.4.apk')" -ForegroundColor Green
@@ -106,17 +106,22 @@ if ($Target -in @('All','Windows')) {
     Write-Host "Публикация Windows Receiver (win-x64 self-contained)..." -ForegroundColor Cyan
     & $DotNet publish (Join-Path $s8Root 'windows\S8Cam.Receiver.csproj') -c Release -r win-x64 --self-contained true -o $s8Dist
     if ($LASTEXITCODE -ne 0) { throw 'Windows publish failed' }
-    
+
     $receiverExe = Join-Path $s8Dist 'H3HCam Receiver.exe'
     if (Test-Path $receiverExe) {
         $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($receiverExe)
-        if ($info.FileVersion -ne '4.0.9.0') {
-            throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.9.0 (got: $($info.FileVersion))"
+        if ($info.FileVersion -ne '4.0.10.0') {
+            throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.10.0 (got: $($info.FileVersion))"
         }
         Write-Host "✅ Receiver Release Guard: $receiverExe verified (Version: $($info.FileVersion))." -ForegroundColor Green
         try {
             Copy-Item -LiteralPath $receiverExe -Destination (Join-Path $s8Root 'H3HCam Receiver.exe') -Force
             Copy-Item -LiteralPath (Join-Path $s8Dist 'libusb-1.0.dll') -Destination (Join-Path $s8Root 'libusb-1.0.dll') -Force
+            $s8RootVirtualcam = Join-Path $s8Root 'tools\virtualcam'
+            New-Item -ItemType Directory -Force -Path $s8RootVirtualcam | Out-Null
+            foreach ($s8Module in @('obs-virtualcam-module64.dll', 'obs-virtualcam-module32.dll')) {
+                Copy-Item -LiteralPath (Join-Path $s8Dist ('tools\virtualcam\' + $s8Module)) -Destination $s8RootVirtualcam -Force
+            }
         } catch {
             Write-Warning "Could not overwrite root H3HCam Receiver.exe (process might be running): $_"
         }

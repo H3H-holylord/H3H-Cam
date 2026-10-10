@@ -9,7 +9,7 @@ dotnet publish windows/S8Cam.Receiver.csproj -c Release -r win-x64 --self-contai
 dotnet run --project tests -c Release -- unit test-results
 ```
 
-libusb-1.0.dll поставляется отдельно от EXE и может заменяться совместимой сборкой. FFmpeg, ADB и OBS устанавливаются отдельно. Для необязательных AI-эффектов поместите совместимую u2netp.onnx в models рядом с EXE.
+libusb-1.0.dll поставляется отдельно от EXE и может заменяться совместимой сборкой. Модули `windows/native/virtualcam/*.dll` MSBuild копирует в `tools/virtualcam` опубликованного клиента — сохраняйте эту папку при распространении. FFmpeg, ADB и полная OBS устанавливаются отдельно. Для необязательных AI-эффектов поместите совместимую u2netp.onnx в models рядом с EXE.
 
 ## Android
 
@@ -40,3 +40,5 @@ cd android
 Проверка обновления NV12/GPU и ориентации OBS: [ANTIGRAVITY-REVIEW-4.0.8.md](ANTIGRAVITY-REVIEW-4.0.8.md). GPU-тест требует Windows/D3D11 и FFmpeg с libx264; аппаратные тесты дополнительно требуют подключённого телефона. Запускайте нагрузочные тесты и измерения производительности последовательно.
 
 Исправление времени жизни USB-устройств и тесты запуска EXE: [STARTUP-CRASH-4.0.9.md](STARTUP-CRASH-4.0.9.md).
+
+Установка виртуальной камеры и тест DirectShow-потребителя: [VIRTUAL-CAMERA-4.0.10.md](VIRTUAL-CAMERA-4.0.10.md). `dotnet run --project tests -c Release -- virtualcam-capture <путь-к-ffmpeg.exe> test-results/virtualcam` использует рабочую регистрацию камеры и требует остановить другие её производители. Обычные unit tests используют отдельные приватные ветки реестра.

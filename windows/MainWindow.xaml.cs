@@ -729,7 +729,7 @@ public partial class MainWindow : Window {
     private void BasicVirtualCam_Click(object sender, RoutedEventArgs e) {
         if (filling || VirtualCamera == null || BasicVirtualCamCheck == null) return;
         VirtualCamera.IsChecked = BasicVirtualCamCheck.IsChecked;
-        QueueSave();
+        VirtualCamera_Click(sender, e);
     }
 
     private void BasicSpout_Click(object sender, RoutedEventArgs e) {
@@ -981,6 +981,7 @@ public partial class MainWindow : Window {
                 QueueSave();
             });
             await engine.Start(operation.Token);
+            UpdateVirtualCamStatus();
             filling = true;
             UpdateDevices([], settings.DeviceSerial);
             filling = false;
@@ -1520,41 +1521,47 @@ public partial class MainWindow : Window {
     }
 
     private void UpdateVirtualCamStatus() {
-        bool installed = VirtualCameraWriter.IsInstalled();
-        bool mfSupported = MediaFoundationVirtualCamera.IsSupported;
-        if (installed) {
-            VirtualCamStatusText.Text = mfSupported
-                ? "✅ Virtual Camera готова (DirectShow & Media Foundation)"
-                : "✅ DirectShow Virtual Camera готова к работе";
-            VirtualCamStatusText.Foreground = new SolidColorBrush(Color.FromRgb(112, 229, 195));
-            InstallVirtualCamButton.Visibility = Visibility.Collapsed;
-        } else {
-            VirtualCamStatusText.Text = mfSupported
-                ? "⚡ Virtual Camera: доступна установка в 1 клик (без прав админа)"
-                : "⚠️ Драйвер не установлен (нужен для Discord / Zoom / Meet)";
-            VirtualCamStatusText.Foreground = new SolidColorBrush(Color.FromRgb(245, 184, 92));
-            InstallVirtualCamButton.Content = "⚡ Установить в 1 клик (без прав админа)";
-            InstallVirtualCamButton.Visibility = Visibility.Visible;
+        var status = VirtualCameraDriver.GetStatus();
+        VirtualCamStatusText.Text = status.Ready
+            ? $"● {status.Message}. Выберите её в приложении видеозвонков."
+            : $"● {status.Message}. Установка выполняется при включении или старте.";
+        VirtualCamStatusText.Foreground = new SolidColorBrush(status.Ready
+            ? Color.FromRgb(112, 229, 195) : Color.FromRgb(245, 184, 92));
+        InstallVirtualCamButton.Content = "Установить / восстановить камеру";
+        InstallVirtualCamButton.Visibility = status.Ready ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private Task<bool>? virtualCamInstall;
+    private async Task<bool> EnsureVirtualCamAsync() {
+        InstallVirtualCamButton.IsEnabled = false;
+        try {
+            virtualCamInstall ??= VirtualCameraDriver.InstallAsync();
+            bool success = await virtualCamInstall;
+            if (!success) throw new IOException("Регистрация камеры не подтверждена");
+            Log($"Виртуальная камера: {VirtualCameraDriver.GetStatus().DeviceName}. Обновите список камер или перезапустите приложение видеозвонков.");
+            return true;
+        } catch (Exception ex) {
+            Log("Ошибка установки виртуальной камеры: " + ex.Message);
+            MessageBox.Show(ex.Message, "Виртуальная камера", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        } finally {
+            virtualCamInstall = null;
+            UpdateVirtualCamStatus();
+            InstallVirtualCamButton.IsEnabled = true;
         }
     }
 
+    private async void VirtualCamera_Click(object sender, RoutedEventArgs e) {
+        if (filling) return;
+        if (BasicVirtualCamCheck != null) BasicVirtualCamCheck.IsChecked = VirtualCamera.IsChecked;
+        controlsDebounceTimer.Stop();
+        if (VirtualCamera.IsChecked == true) await EnsureVirtualCamAsync();
+        QueueSave();
+    }
+
     private async void InstallVirtualCam_Click(object sender, RoutedEventArgs e) {
-        InstallVirtualCamButton.IsEnabled = false;
-        Log("Установка Virtual Camera (DirectShow & Media Foundation)...");
-        try {
-            var success = await VirtualCameraWriter.InstallDriverAsync();
-            UpdateVirtualCamStatus();
-            if (success) {
-                Log("✅ Virtual Camera успешно зарегистрирована (без UAC)!");
-                MessageBox.Show("Драйвер виртуальной камеры успешно установлен!\nТеперь H3HCam видна в Discord, Telegram, Zoom, Teams, Meet и браузерах без OBS.", "H3H Cam", MessageBoxButton.OK, MessageBoxImage.Information);
-            } else {
-                Log("⚠️ Не удалось зарегистрировать драйвер.");
-            }
-        } catch (Exception ex) {
-            Log("Ошибка установки VCam: " + ex.Message);
-        } finally {
-            InstallVirtualCamButton.IsEnabled = true;
-        }
+        if (await EnsureVirtualCamAsync() && engine?.Running == true && VirtualCamera.IsChecked == true)
+            await Start(restart: true);
     }
 
     private void ShowQr_Click(object sender, RoutedEventArgs e) {
@@ -1625,7 +1632,7 @@ public partial class MainWindow : Window {
             var path = ToolPaths.Find("obs64.exe", ObsPath.Text.Trim());
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path)! });
             if (VirtualCamera.IsChecked == true)
-                Log("OBS: источник «Устройство захвата видео» → OBS Virtual Camera → 1920×1080, 60 FPS; буферизация: отключить. Выход «Запустить виртуальную камеру» в OBS должен быть выключен.");
+                Log($"OBS: источник «Устройство захвата видео» → {VirtualCameraDriver.GetStatus().DeviceName}; выберите фактические разрешение/FPS потока, буферизация: отключить. Выход «Запустить виртуальную камеру» в OBS должен быть выключен.");
             else Log($"OBS: Media Source → Local file off → udp://127.0.0.1:{ObsPort.Text}?fifo_size=4096&overrun_nonfatal=1");
         } catch (Exception ex) { Log(ex.Message); }
     }
@@ -1678,7 +1685,7 @@ public partial class MainWindow : Window {
                               $"ADB: {ToolPaths.Find("adb.exe", settings.AdbPath)}\n" +
                               $"FFmpeg: {ToolPaths.Find("ffmpeg.exe", settings.FfmpegPath)}\n" +
                               $"FFplay: {ToolPaths.Find("ffplay.exe", settings.FfplayPath)}\n" +
-                              $"OBS Virtual Camera: {(VirtualCameraWriter.IsInstalled() ? "Detected" : "Not Found")}\n";
+                              $"Virtual Camera: {VirtualCameraDriver.GetStatus().Message}\n";
                 AddZipText(zip, "system.txt", sysInfo);
                 if (capabilities != null) {
                     AddZipText(zip, "capabilities.json", JsonSerializer.Serialize(capabilities, new JsonSerializerOptions { WriteIndented = true }));

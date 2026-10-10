@@ -16,114 +16,14 @@ public sealed class VirtualCameraWriter : IDisposable {
     private bool disposed;
     public long Frames { get; private set; }
 
-    public static bool IsInstalled() {
-        using var driver = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(
-            @"CLSID\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}\InprocServer32");
-        return driver != null;
-    }
-
-    public static string? FindDriverDll() {
-        var baseDir = AppContext.BaseDirectory;
-        var candidates = new[] {
-            Path.Combine(baseDir, "tools", "virtualcam", "obs-virtualcam-module64.dll"),
-            Path.Combine(baseDir, "obs-virtualcam-module64.dll"),
-            Path.Combine(Environment.CurrentDirectory, "tools", "virtualcam", "obs-virtualcam-module64.dll"),
-            Path.Combine(Environment.CurrentDirectory, "windows", "tools", "virtualcam", "obs-virtualcam-module64.dll"),
-            @"C:\Program Files\obs-studio\data\obs-plugins\win-dshow\obs-virtualcam-module64.dll"
-        };
-        return candidates.FirstOrDefault(File.Exists);
-    }
-
-    private static readonly byte[] s_dshowFilterData = [
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x30, 0x70, 0x69, 0x33, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x74, 0x79, 0x33, 0x00, 0x00, 0x00, 0x00,
-        0x38, 0x00, 0x00, 0x00, 0x48, 0x00, 0x00, 0x00, 0x76, 0x69, 0x64, 0x73, 0x00, 0x00, 0x10, 0x00,
-        0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71, 0x4E, 0x56, 0x31, 0x32, 0x00, 0x00, 0x10, 0x00,
-        0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71
-    ];
-
-    public static bool InstallUserLevel() {
-        var dll = FindDriverDll();
-        if (dll == null) return false;
-        try {
-            const string clsid = "{A3FCE0F5-3493-419F-958A-ABA1250EC20B}";
-            const string catId = "{860BB310-5D01-11d0-BD3B-00A0C911CE86}";
-
-            using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey($@"Software\Classes\CLSID\{clsid}")) {
-                key.SetValue(null, "H3H Cam (Virtual Camera)");
-                using var inproc = key.CreateSubKey("InprocServer32");
-                inproc.SetValue(null, Path.GetFullPath(dll));
-                inproc.SetValue("ThreadingModel", "Both");
-            }
-
-            using (var catKey = Microsoft.Win32.Registry.CurrentUser.CreateSubKey($@"Software\Classes\CLSID\{catId}\Instance\{clsid}")) {
-                catKey.SetValue("CLSID", clsid);
-                catKey.SetValue("FriendlyName", "H3H Cam");
-                catKey.SetValue("FilterData", s_dshowFilterData, Microsoft.Win32.RegistryValueKind.Binary);
-            }
-
-            return IsInstalled();
-        } catch {
-            return false;
-        }
-    }
-
-    public static bool UninstallUserLevel() {
-        try {
-            const string clsid = "{A3FCE0F5-3493-419F-958A-ABA1250EC20B}";
-            const string catId = "{860BB310-5D01-11d0-BD3B-00A0C911CE86}";
-            Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\CLSID\{clsid}", false);
-            Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\CLSID\{catId}\Instance\{clsid}", false);
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    public static async Task<bool> InstallDriverAsync(bool forceElevated = false) {
-        if (!forceElevated && InstallUserLevel()) {
-            return true;
-        }
-
-        var dll = FindDriverDll();
-        if (dll == null) throw new FileNotFoundException("Файл obs-virtualcam-module64.dll не найден в tools/virtualcam/");
-        var psi = new ProcessStartInfo {
-            FileName = "regsvr32.exe",
-            Arguments = $"/s \"{dll}\"",
-            UseShellExecute = true,
-            Verb = "runas"
-        };
-        try {
-            using var p = Process.Start(psi);
-            if (p != null) await p.WaitForExitAsync();
-            return IsInstalled();
-        } catch { return false; }
-    }
-
-    public static async Task<bool> UninstallDriverAsync() {
-        UninstallUserLevel();
-        var dll = FindDriverDll();
-        if (dll == null) {
-            using var k = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(@"CLSID\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}\InprocServer32");
-            dll = k?.GetValue(null) as string;
-        }
-        if (string.IsNullOrWhiteSpace(dll) || !File.Exists(dll)) return !IsInstalled();
-        var psi = new ProcessStartInfo {
-            FileName = "regsvr32.exe",
-            Arguments = $"/u /s \"{dll}\"",
-            UseShellExecute = true,
-            Verb = "runas"
-        };
-        try {
-            using var p = Process.Start(psi);
-            if (p != null) await p.WaitForExitAsync();
-            return !IsInstalled();
-        } catch { return !IsInstalled(); }
-    }
+    public static bool IsInstalled() => VirtualCameraDriver.GetStatus().Ready;
+    public static string? FindDriverDll() => VirtualCameraDriver.FindDriverDll();
+    public static bool InstallUserLevel() => VirtualCameraDriver.EnsureInstalled();
+    public static bool UninstallUserLevel() => VirtualCameraDriver.UninstallUserLevel();
+    public static Task<bool> InstallDriverAsync() => VirtualCameraDriver.InstallAsync();
 
     public VirtualCameraWriter(int width, int height, int fps) {
-        if (!IsInstalled()) throw new IOException("Не установлен драйвер DirectShow Virtual Camera. Нажмите «Установить в 1 клик» в окне настроек H3H Cam.");
+        if (!VirtualCameraDriver.EnsureInstalled()) throw new IOException("Не удалось зарегистрировать виртуальную камеру");
         if (width % 2 != 0 || height % 2 != 0 || width < 2 || height < 2 || fps < 1)
             throw new ArgumentException("NV12 needs even dimensions and positive FPS");
         frameBytes = checked(width * height * 3 / 2);

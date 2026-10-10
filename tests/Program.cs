@@ -191,6 +191,8 @@ internal static class Program {
         if (args.Length == 0) throw new ArgumentException(
             "Commands: unit [folder] | probe <auto|usb|wifi> [serial] | stream <usb|wifi> <folder> [serial] [seconds]");
         switch (args[0]) {
+            case "virtualcam-capture":
+                await VirtualCameraCaptureTest.Run(args[1], args[2]);return;
             case "startup-smoke":
                 await StartupSmokeTests.Run(args[1],args[2]);return;
             case "usb-probe-stress":
@@ -1174,17 +1176,7 @@ internal static class Program {
         Assert(File.Exists(snap4K.FilePath) && snap4K.Width == 3840 && snap4K.Height == 2160 && snap4K.FileSize > 0, "SnapshotManager 4K edge-adaptive super-res snapshot");
         File.Delete(snap4K.FilePath);
 
-        // Media Foundation Virtual Camera tests
-        var mfSupported = MediaFoundationVirtualCamera.IsSupported;
-        Console.WriteLine($"[TEST] Windows Media Foundation Virtual Camera supported: {mfSupported}");
-
-        // VirtualCameraWriter zero-admin user-level registration tests
-        var driverDllPath = VirtualCameraWriter.FindDriverDll();
-        if (driverDllPath != null) {
-            bool userInstallResult = VirtualCameraWriter.InstallUserLevel();
-            Assert(userInstallResult, "VirtualCameraWriter.InstallUserLevel succeeded");
-            Assert(VirtualCameraWriter.IsInstalled(), "VirtualCameraWriter.IsInstalled returns true after user-level registration");
-        }
+        VirtualCameraDriverTests.Run(root);
 
         // StreamRecorder unit tests
         var testRec = new StreamRecorder(_ => {});

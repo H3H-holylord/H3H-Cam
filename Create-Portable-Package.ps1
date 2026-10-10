@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$DistDir = '',
     [switch]$NoZip
 )
@@ -7,7 +7,7 @@ $s8Root = $PSScriptRoot
 if (-not $DistDir) { $DistDir = Join-Path $s8Root 'dist' }
 $DistDir = [IO.Path]::GetFullPath($DistDir)
 
-Write-Host "=== Создание автономного Portable-пакета H3H Cam 4.0.9 ===" -ForegroundColor Cyan
+Write-Host "=== Создание автономного Portable-пакета H3H Cam 4.0.10 ===" -ForegroundColor Cyan
 
 function Get-AndroidTool([string]$ToolName) {
     $sdk = $env:ANDROID_HOME
@@ -49,7 +49,7 @@ function Test-ApkIsRelease([string]$ApkPath) {
 
 function Assert-ReleaseApk([string]$ApkPath) {
     if (-not (Test-Path $ApkPath)) { throw "Release APK not found: $ApkPath" }
-    
+
     $aapt = Get-AndroidTool 'aapt.exe'
     if (-not $aapt) { throw 'aapt.exe is required to verify a release APK' }
     if ($aapt) {
@@ -69,7 +69,7 @@ function Assert-ReleaseApk([string]$ApkPath) {
             throw "RELEASE GUARD FAILED: versionName must be 4.0.4"
         }
     }
-    
+
     $apksigner = Get-AndroidTool 'apksigner.bat'
     if (-not $apksigner) { throw 'apksigner.bat is required to verify a release APK' }
     if ($apksigner) {
@@ -93,8 +93,8 @@ function Assert-ReleaseApk([string]$ApkPath) {
 function Assert-ReleaseExe([string]$ExePath) {
     if (-not (Test-Path $ExePath)) { throw "Receiver EXE does not exist: $ExePath" }
     $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ExePath)
-    if ($info.FileVersion -ne '4.0.9.0') {
-        throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.9.0 (got: $($info.FileVersion))"
+    if ($info.FileVersion -ne '4.0.10.0') {
+        throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.10.0 (got: $($info.FileVersion))"
     }
     Write-Host "✅ Receiver Release Guard: $ExePath подтверждён (Version: $($info.FileVersion))." -ForegroundColor Green
 }
@@ -137,7 +137,7 @@ if (-not $ffplayPath -or -not (Test-Path $ffplayPath)) { throw "Не найде�
 $adbDir = Split-Path $adbPath -Parent
 
 # 3. Формируем папку пакета
-$portableDir = Join-Path $DistDir 'H3H-Cam-4.0.9-Portable'
+$portableDir = Join-Path $DistDir 'H3H-Cam-4.0.10-Portable'
 $portableDir = [IO.Path]::GetFullPath($portableDir)
 if ([IO.Path]::GetDirectoryName($portableDir) -ne $DistDir.TrimEnd('\')) {
     throw "Portable target must be a direct child of DistDir: $portableDir"
@@ -196,9 +196,13 @@ foreach ($dll in @('AdbWinApi.dll', 'AdbWinUsbApi.dll', 'libwinpthread-1.dll')) 
 Copy-Item -LiteralPath $ffmpegPath -Destination (Join-Path $toolsDir 'ffmpeg.exe') -Force
 Copy-Item -LiteralPath $ffplayPath -Destination (Join-Path $toolsDir 'ffplay.exe') -Force
 
-if (Test-Path (Join-Path $s8Root 'windows\tools\virtualcam')) {
-    Copy-Item -LiteralPath (Join-Path $s8Root 'windows\tools\virtualcam') -Destination $toolsDir -Recurse -Force
+$virtualcamSource = Join-Path $s8Root 'windows\native\virtualcam'
+$virtualcamTarget = Join-Path $toolsDir 'virtualcam'
+New-Item -ItemType Directory -Force -Path $virtualcamTarget | Out-Null
+foreach ($cameraModule in @('obs-virtualcam-module64.dll', 'obs-virtualcam-module32.dll')) {
+    Copy-Item -LiteralPath (Join-Path $virtualcamSource $cameraModule) -Destination $virtualcamTarget -Force
 }
+
 
 Write-Host "Папка Portable успешно сформирована: $portableDir" -ForegroundColor Green
 
@@ -210,10 +214,10 @@ $hashLines = Get-ChildItem -LiteralPath $portableDir -File -Recurse | Sort-Objec
 
 # 4. Создаем ZIP-архив со стандартными разделителями '/'
 if (-not $NoZip) {
-    $zipPath = Join-Path $DistDir 'H3H-Cam-4.0.9-Portable.zip'
+    $zipPath = Join-Path $DistDir 'H3H-Cam-4.0.10-Portable.zip'
     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
     Write-Host "Сжатие в ZIP-архив: $zipPath ..." -ForegroundColor Yellow
-    
+
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zipArchive = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
@@ -231,11 +235,11 @@ if (-not $NoZip) {
     } finally {
         $zipArchive.Dispose()
     }
-    
+
     $zipItem = Get-Item $zipPath
     $zipMb = [math]::Round($zipItem.Length / 1MB, 1)
     Write-Host "Архив готов: $zipPath ($($zipMb) MB)" -ForegroundColor Green
-    
+
     $sha = (Get-FileHash $zipPath -Algorithm SHA256).Hash
     Write-Host "SHA256: $sha" -ForegroundColor Cyan
 }

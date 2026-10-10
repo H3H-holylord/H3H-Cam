@@ -547,7 +547,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     virtualCamera = CreateVirtualCamera(ct);
                     virtualBootstrapped = false;
                     virtualGeneration = Volatile.Read(ref sourceGeneration);
-                    if (settings.VirtualCamera) log("Камера для приложений: выберите OBS Virtual Camera. В OBS не включайте её выход одновременно с H3H Cam.");
+                    if (settings.VirtualCamera) log($"Камера для приложений: выберите «{VirtualCameraDriver.GetStatus().DeviceName}». В OBS не включайте выход виртуальной камеры одновременно с H3H Cam.");
                 } catch (Exception ex) {
                     log("⚠️ Прямой видеовывод пропущен: " + ex.Message);
                     virtualCamera = null;

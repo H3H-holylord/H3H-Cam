@@ -7,7 +7,6 @@ namespace S8Cam;
 public sealed class VirtualCameraOutput : IAsyncDisposable {
     private readonly VirtualCameraWriter? writer;
     private readonly SpoutSender? spout;
-    private readonly MediaFoundationVirtualCamera? mfCam;
     private readonly NamedPipeServerStream? pipeServer;
     private readonly Process? decoder;
     private readonly CancellationTokenSource stop;
@@ -70,21 +69,12 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
         if (settings.VirtualCamera) {
             try {
                 writer = new VirtualCameraWriter(finalDim.Width, finalDim.Height, settings.Fps);
-                log($"Камера для приложений: выберите H3H Cam / OBS Virtual Camera ({finalDim.Width}x{finalDim.Height}).");
+                log($"Камера для приложений: выберите «{VirtualCameraDriver.GetStatus().DeviceName}» ({finalDim.Width}x{finalDim.Height}). После установки обновите список камер или перезапустите приложение видеозвонков.");
             } catch (Exception ex) {
-                log("⚠️ OBS Virtual Camera пропущена: " + ex.Message);
+                log("⚠️ Виртуальная камера недоступна: " + ex.Message);
             }
 
-            if (MediaFoundationVirtualCamera.IsSupported) {
-                try {
-                    mfCam = new MediaFoundationVirtualCamera();
-                    if (mfCam.Start("H3H Cam (Media Foundation)")) {
-                        log("Media Foundation: зарегистрирована сессионная виртуальная камера Windows 10/11.");
-                    }
-                } catch (Exception ex) {
-                    log("Media Foundation VCam note: " + ex.Message);
-                }
-            }
+
         }
 
         stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -137,7 +127,6 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
             pipeServer?.Dispose();
             writer?.Dispose();
             spout?.Dispose();
-            mfCam?.Dispose();
             throw;
         }
     }
@@ -279,7 +268,6 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
             decoder?.Dispose();
             writer?.Dispose();
             spout?.Dispose();
-            mfCam?.Dispose();
             stop.Dispose();
         }
     }

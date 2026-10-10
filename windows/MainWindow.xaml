@@ -1,4 +1,4 @@
-﻿<Window x:Class="S8Cam.MainWindow"
+<Window x:Class="S8Cam.MainWindow"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  Title="H3H Cam 4.0.9" Icon="app.ico" Width="1180" Height="900" MinWidth="1000" MinHeight="680"
@@ -126,6 +126,8 @@
        <CheckBox x:Name="BasicPreviewCheck" Content="Показывать предпросмотр" IsChecked="{Binding IsChecked, ElementName=Preview, Mode=TwoWay}" Margin="0,0,0,8"/>
        <CheckBox Content="Гасить экран телефона (ADB)" IsChecked="{Binding IsChecked, ElementName=ScreenOff, Mode=TwoWay}" Margin="0,0,0,8"/>
        <CheckBox x:Name="BasicVirtualCamCheck" Content="Виртуальная камера (Zoom / Discord)" Click="BasicVirtualCam_Click" Margin="0,0,0,8"/>
+       <TextBlock Text="{Binding Text, ElementName=VirtualCamStatusText}" Foreground="{Binding Foreground, ElementName=VirtualCamStatusText}" FontSize="11" TextWrapping="Wrap" Margin="24,-2,0,8"/>
+       <Button Content="{Binding Content, ElementName=InstallVirtualCamButton}" Visibility="{Binding Visibility, ElementName=InstallVirtualCamButton}" IsEnabled="{Binding IsEnabled, ElementName=InstallVirtualCamButton}" Click="InstallVirtualCam_Click" HorizontalAlignment="Left" Padding="10,5" Margin="24,0,0,8"/>
        <CheckBox x:Name="BasicSpoutCheck" Content="Spout2 для OBS Studio" Click="BasicSpout_Click" Margin="0,0,0,8"/>
        <CheckBox x:Name="BasicFaceTrackingCheck" Content="Авто-слежение за лицом (Center Stage)" Click="BasicFaceTracking_Click" Margin="0,0,0,8"/>
        <CheckBox x:Name="BasicStabilizationCheck" Content="🎯 Стабилизация от тряски (OIS / EIS)" Click="BasicStabilization_Click" Margin="0,0,0,4"/>
@@ -168,9 +170,9 @@
 
         <DockPanel Margin="0,0,0,4">
          <Button x:Name="InstallVirtualCamButton" Content="📥 Установить DirectShow VCam" Click="InstallVirtualCam_Click" DockPanel.Dock="Right" Padding="10,4" Margin="6,0,0,0" FontSize="11" Background="#203A4E" Foreground="#70E5C3" Visibility="Collapsed"/>
-         <CheckBox x:Name="VirtualCamera" Content="Виртуальная камера для Discord / Zoom / Telegram" VerticalAlignment="Center"/>
+         <CheckBox x:Name="VirtualCamera" Content="Виртуальная камера для Discord / Zoom / Telegram" Click="VirtualCamera_Click" VerticalAlignment="Center"/>
         </DockPanel>
-        <TextBlock x:Name="VirtualCamStatusText" Text="● Проверка статуса виртуальной камеры..." Foreground="#8498B4" FontSize="11" Margin="24,-2,0,8"/>
+        <TextBlock x:Name="VirtualCamStatusText" Text="● Проверка статуса виртуальной камеры..." Foreground="#8498B4" FontSize="11" Margin="24,-2,0,8" TextWrapping="Wrap"/>
 
         <CheckBox x:Name="Preview" Content="Показывать предпросмотр · можно переключать во время стрима" Checked="Preview_Changed" Unchecked="Preview_Changed" Margin="0,0,0,10"/>
 

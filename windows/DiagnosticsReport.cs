@@ -76,7 +76,8 @@ public static class DiagnosticsReport {
         // 4. Output Status
         sb.AppendLine("[4. OUTPUT SINK CHANNELS]");
         sb.AppendLine($"  Spout2 Direct (OBS):  {(settings.SpoutOutput ? $"ACTIVE (Sender: H3HCam, {settings.FinalOutputDimensions.Width}x{settings.FinalOutputDimensions.Height})" : "Disabled")}");
-        sb.AppendLine($"  Virtual Camera:       {(settings.VirtualCamera ? "ACTIVE (DirectShow OBS-VirtualCam filter)" : "Disabled")}");
+        sb.AppendLine($"  Virtual Camera:       {(settings.VirtualCamera ? "Enabled (requested)" : "Disabled")}");
+        sb.AppendLine($"  Camera registration:  {VirtualCameraDriver.GetStatus().Message}");
         sb.AppendLine($"  Local Preview:        {(settings.Preview ? "Enabled (Low-delay Direct3D/WPF)" : "Disabled")}");
         sb.AppendLine($"  MPEG-TS Relay (OBS):  {(settings.Obs ? $"Enabled (UDP port {settings.ObsPort})" : "Disabled")}");
         sb.AppendLine();
