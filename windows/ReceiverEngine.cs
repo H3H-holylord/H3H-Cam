@@ -32,9 +32,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
 
     public string StartRecording(string? customDir = null) {
         if (!Running || string.IsNullOrEmpty(sdpPath))
-            throw new InvalidOperationException("Поток не активен для записи");
-        if (settings.PrivacyMute) throw new InvalidOperationException("Сначала выключите паузу приватности");
-        if (recorder.IsRecording) throw new InvalidOperationException("Запись уже активна");
+            throw new InvalidOperationException(L.Get("s_a74ce2583685"));
+        if (settings.PrivacyMute) throw new InvalidOperationException(L.Get("s_5990c5334e3d"));
+        if (recorder.IsRecording) throw new InvalidOperationException(L.Get("s_c0f15d76455f"));
         int port;
         do { port = FreeUdpPair(); }
         while (Math.Abs(port - ingestPort) < 2 || Math.Abs(port - previewIngestPort) < 2 || Math.Abs(port - virtualIngestPort) < 2);
@@ -117,7 +117,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     private long lastIdrRequestTick = 0;
     private long oldBytes, oldFrames;
     private readonly Stopwatch elapsed = new();
-    private string androidState = "Ожидание камеры", thermal = "—", details = "";
+    private string androidState = L.Get("s_8daab2e0e0d1"), thermal = "—", details = "";
     private double encodedMbps;
     private PowerTelemetry power = new();
     private string resolution = "—";
@@ -125,7 +125,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     private bool screenSlept;
     private int adaptiveBitrate, stableSeconds;
     private int modeSampleCount;
-    private string modeVerification = "проверка режима…";
+    private string modeVerification = L.Get("s_e56fd1b2ef0f");
     private IPAddress? expectedPhoneAddress;
 
     public event Action<LiveStatus>? Status;
@@ -217,7 +217,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                             virtualCamera = CreateVirtualCamera(ct);
                             virtualGeneration = Volatile.Read(ref sourceGeneration);
                         } catch (Exception ex) {
-                            log("⚠️ Виртуальная камера недоступна: " + ex.Message);
+                            log(L.Get("s_c7473a81c3f9") + ex.Message);
                             virtualCamera = null;
                         }
                     }
@@ -380,7 +380,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     ? await ProbeWifi(udp!, timeout.Token)
                     : await ProbeUsb(tcp!, timeout.Token);
             } catch (OperationCanceledException) when (!token.IsCancellationRequested) {
-                throw new TimeoutException("Поток не прошёл полную проверку за 7 секунд: нужны RTP, SPS/PPS, IDR и marker.");
+                throw new TimeoutException(L.Get("s_e6bd7c863a41"));
             }
             var isHevc = settings.Codec == "hevc";
             log($"TEST OK ? {TransportLabel(transport)} ? {(isHevc ? "H.265 (HEVC)" : "H.264")} ? {result.Packets} RTP packets ? {(isHevc ? "VPS/SPS/PPS" : "SPS/PPS")} ? IDR ? marker ? SSRC {result.Ssrc:x8}");
@@ -470,7 +470,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 settings.AdbPath = ToolPaths.Find("adb.exe", settings.AdbPath);
             else if (settings.Transport == "auto") {
                 try { settings.AdbPath = ToolPaths.Find("adb.exe", settings.AdbPath); }
-                catch (FileNotFoundException) { log("ADB не найден; проверяем активный USB Direct."); }
+                catch (FileNotFoundException) { log(L.Get("s_39f3458b20c1")); }
             }
             settings.FfmpegPath = ToolPaths.Find("ffmpeg.exe", settings.FfmpegPath);
             if (settings.Preview) settings.FfplayPath = ToolPaths.Find("ffplay.exe", settings.FfplayPath);
@@ -504,7 +504,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             lostPackets = recoveredPackets = nackRequests = oldLostPackets = oldRecoveredPackets = 0;
             adaptiveBitrate = settings.EffectiveBitrateMbps(effectiveTransport) * 1_000_000;
             stableSeconds = 0;
-            modeSampleCount = 0; modeVerification = "проверка режима…";
+            modeSampleCount = 0; modeVerification = L.Get("s_e56fd1b2ef0f");
             screenSlept = false;
             elapsed.Restart();
             selectedFps = settings.Fps;
@@ -547,9 +547,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     virtualCamera = CreateVirtualCamera(ct);
                     virtualBootstrapped = false;
                     virtualGeneration = Volatile.Read(ref sourceGeneration);
-                    if (settings.VirtualCamera) log($"Камера для приложений: выберите «{VirtualCameraDriver.GetStatus().DeviceName}». В OBS не включайте выход виртуальной камеры одновременно с H3H Cam.");
+                    if (settings.VirtualCamera) log(L.Format("s_cd9a7ff06bce", VirtualCameraDriver.GetStatus().DeviceName));
                 } catch (Exception ex) {
-                    log("⚠️ Прямой видеовывод пропущен: " + ex.Message);
+                    log(L.Get("s_d9fc14fd2580") + ex.Message);
                     virtualCamera = null;
                 }
             }
@@ -591,11 +591,11 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 return port;
             } catch (SocketException) {}
         }
-        throw new IOException("Нет свободной пары RTP/RTCP портов");
+        throw new IOException(L.Get("s_14aa4fc7ac9c"));
     }
 
     private async Task ConfigureInput(string transport, CancellationToken ct, bool initial = false) {
-        if (transport is not ("wifi" or "usb" or "direct")) throw new ArgumentException("Неизвестный transport: " + transport);
+        if (transport is not ("wifi" or "usb" or "direct")) throw new ArgumentException(L.Get("s_6a2bc9e52824") + transport);
 
         if (!initial && effectiveTransport == transport && inputTask?.IsCompleted == false) {
             if (transport == "usb") await adb.Reverse(ct);
@@ -886,7 +886,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         var delta = state.Timestamp.HasValue ? unchecked((int)(nextTimestamp - state.Timestamp.Value)) : 0;
         if (state.Ssrc.HasValue && (state.Ssrc.Value != nextSsrc || delta > 450000 || delta < -90000)) {
             Interlocked.Increment(ref sourceGeneration);
-            log("RTP: новая сессия или разрыв временной шкалы; пересоздание приёмника");
+            log(L.Get("s_286e4385aa02"));
             state.ExpectedSequence = null;
             state.Missing.Clear();
             rtpTransitMinOffset = double.PositiveInfinity;
@@ -1097,8 +1097,8 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 if (modeSampleCount == 4) {
                     var ratio = fps / Math.Max(1, settings.Fps);
                     modeVerification = ratio >= 0.90
-                        ? $"режим проверен: {resolution} {settings.Fps} FPS"
-                        : $"режим не держит {settings.Fps} FPS: фактически {fps:F1}";
+                        ? L.Format("s_4bedba24697d", resolution, settings.Fps)
+                        : L.Format("s_7bfb518c2852", settings.Fps, fps);
                     log("Camera mode · " + modeVerification);
                 }
             }
@@ -1108,11 +1108,11 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             var statusDetails = details + (telemetryAge > 5000 ? " · telemetry reconnecting" : "") +
                 " · " + modeVerification +
                 (effectiveTransport == "wifi" ? $" · RTP loss {lost}, recovered {recovered}, NACK {Interlocked.Read(ref nackRequests)} · target {adaptiveBitrate / 1e6:F0} Mbps" : "") +
-                ((settings.VirtualCamera || settings.SpoutOutput) ? $" · Direct/Spout: {outputFps:F1} FPS · {outputFrames} кадров · пропущено устаревших {virtualCamera?.SkippedFrames ?? 0} · GPU skipped {virtualCamera?.GpuDroppedFrames ?? 0}" : "");
-            Status?.Invoke(new LiveStatus(settings.PrivacyMute ? "Приватность · передача приостановлена" : idle > 4000 ? "Ожидание потока / reconnect" : androidState,
+                ((settings.VirtualCamera || settings.SpoutOutput) ? L.Format("s_87b03a325069", outputFps, outputFrames, virtualCamera?.SkippedFrames ?? 0, virtualCamera?.GpuDroppedFrames ?? 0) : "");
+            Status?.Invoke(new LiveStatus(settings.PrivacyMute ? L.Get("s_dd94124e596c") : idle > 4000 ? L.Get("s_6b15d0c45740") : androidState,
                 effectiveTransport == "direct" ? "USB accessory" : adb.Serial, TransportLabel(effectiveTransport), resolution, settings.Fps, fps, rate, encodedMbps,
                 Interlocked.Read(ref packets), elapsed.Elapsed,
-                !settings.Obs ? "прямой вывод камеры · relay выключен" : ffmpeg?.HasExited == false ? "running · RTP copy" : "restarting", thermal, statusDetails, power,
+                !settings.Obs ? L.Get("s_26dcd29019b8") : ffmpeg?.HasExited == false ? "running · RTP copy" : "restarting", thermal, statusDetails, power,
                 lost, recovered, Volatile.Read(ref droppedFrames), estimatedLatencyMs, lastFace, connectionManager.State));
 
             try {
@@ -1124,7 +1124,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                   try {
                    if ((settings.VirtualCamera || settings.SpoutOutput) && (virtualCamera?.Alive != true ||
                     virtualGeneration != Volatile.Read(ref sourceGeneration) || (fps>5 && virtualCamera?.Stalled==true))) {
-                    if(virtualCamera?.Stalled==true)log("Видеовывод не публикует кадры; перезапуск декодера с новым IDR.");
+                    if(virtualCamera?.Stalled==true)log(L.Get("s_ef5124bd264f"));
                     var oldCamera = virtualCamera;
                     virtualCamera = null;
                     if (oldCamera != null) await oldCamera.DisposeAsync();
@@ -1133,7 +1133,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                         virtualCamera = CreateVirtualCamera(ct);
                         virtualGeneration = Volatile.Read(ref sourceGeneration);
                     } catch (Exception ex) {
-                        log("⚠️ Прямой видеовывод недоступен: " + ex.Message);
+                        log(L.Get("s_54f8e64d6ecd") + ex.Message);
                         virtualCamera = null;
                     }
                     RequestIdr();
@@ -1143,7 +1143,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 if (settings.ScreenOff && effectiveTransport != "direct" && !screenSlept && fps > 0) {
                     await adb.Command(ct, "shell", "input", "keyevent", "223");
                     screenSlept = true;
-                    log("Экран телефона погашен; видеопередача продолжается.");
+                    log(L.Get("s_2ac19455b030"));
                 }
                 if (settings.Obs && !settings.PrivacyMute && (ffmpeg?.HasExited != false ||
                     Volatile.Read(ref sourceGeneration) != Volatile.Read(ref relayGeneration) ||
@@ -1153,7 +1153,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 }
                 if (!settings.Preview && (previewDecoder != null || ffplay != null)) {
                     StopPreview();
-                    log("Предпросмотр выключен; передача продолжается.");
+                    log(L.Get("s_6fef938600b5"));
                 } else if (settings.Preview && ((previewDecoder?.Alive != true && !SharedPreview) || (previewDecoder != null && SharedPreview) || previewGeneration != Volatile.Read(ref sourceGeneration))) {
                     StopPreview();
                     try { StartPreview(); }
@@ -1209,7 +1209,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                         recoveryAttempt = 0;
                         connectionManager.OnConnected("direct");
                     } else if (effectiveTransport == "usb" && settings.AutoReconnect) {
-                        log("USB поток прерван. Запуск сторожевого пса авто-переподключения...");
+                        log(L.Get("s_e86b5744808c"));
                         var ok = await adb.TryReconnectUsb(ct, maxRetries: 10, delayMs: 800);
                         if (ok) {
                             RefreshExpectedPhoneAddress();
@@ -1219,7 +1219,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                             Interlocked.Exchange(ref lastReceive, Environment.TickCount64);
                             recoveryAttempt = 0;
                             connectionManager.OnConnected("usb");
-                            log("USB поток успешно восстановлен авто-переподключением.");
+                            log(L.Get("s_46fc98a37b32"));
                         }
                     } else {
                         await adb.Connect(ct);
@@ -1308,8 +1308,8 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         elapsed.Stop();
         lifetime = null;
         cts.Dispose();
-        connectionManager.OnDisconnected("Остановлено");
-        log("STOP · локальные процессы и сокеты закрыты");
+        connectionManager.OnDisconnected(L.Get("s_3028fa0907c0"));
+        log(L.Get("s_2444e7310c12"));
     }
 
     public async ValueTask DisposeAsync() {

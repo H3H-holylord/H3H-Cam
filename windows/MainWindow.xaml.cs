@@ -15,7 +15,8 @@ using Microsoft.Win32;
 namespace S8Cam;
 
 public partial class MainWindow : Window {
-    private sealed record Choice(string Key, string Label) {
+    private sealed record Choice(string Key, string RawLabel) {
+        public string Label => L.PhoneText(L.Relocalize(RawLabel));
         public override string ToString() => Label;
     }
     private sealed record FpsChoice(int Value) {
@@ -70,7 +71,11 @@ public partial class MainWindow : Window {
 
     public MainWindow() {
         filling = true;
+        settings = Settings.Load();
+        L.Configure(settings.Language);
         InitializeComponent();
+        Title = "H3H Cam " + typeof(App).Assembly.GetName().Version?.ToString(3);
+        LanguageChoice.SelectedIndex = settings.Language switch { "ru" => 1, "en" => 2, _ => 0 };
         IsVisibleChanged += (_, _) => UpdatePreviewActivity();
         wbOverlayTimer.Tick += (_, _) => {
             wbOverlayTimer.Stop();
@@ -79,7 +84,6 @@ public partial class MainWindow : Window {
         if (System.Windows.Application.Current != null) {
             System.Windows.Application.Current.SessionEnding += (_, _) => { forceExit = true; };
         }
-        settings = Settings.Load();
         if (settings.WindowWidth >= 800 && settings.WindowHeight >= 600) {
             Width = settings.WindowWidth;
             Height = settings.WindowHeight;
@@ -95,7 +99,7 @@ public partial class MainWindow : Window {
         wifiDiscovery = new WifiDiscoveryService(() => Volatile.Read(ref settings).Clone(), Log);
         wifiDiscovery.PhoneDiscovered += phone => Dispatcher.BeginInvoke(() => {
             if (closing || closed) return;
-            Log($"📡 Обнаружен телефон по Wi-Fi: {phone.Model} ({phone.Ip})");
+            Log(L.Format("s_0c10be76de5c", phone.Model, phone.Ip));
             if (string.IsNullOrWhiteSpace(PhoneIp.Text) || PhoneIp.Text == "192.168.1.100") {
                 PhoneIp.Text = phone.Ip;
                 QueueSave();
@@ -133,7 +137,7 @@ public partial class MainWindow : Window {
                 current.Save();
                 UpdateRunOnStartup(current.RunOnStartup);
             }
-            catch (Exception ex) { Log("Настройки: " + ex.Message); }
+            catch (Exception ex) { Log(L.Get("s_b3f65a721581") + ex.Message); }
         };
         controlsDebounceTimer.Tick += (_, _) => {
             controlsDebounceTimer.Stop();
@@ -200,8 +204,8 @@ public partial class MainWindow : Window {
 
         thermalGuard = new ThermalGuard(settings,
             onThrottle: (reducedBitrate, temp, reason) => Dispatcher.Invoke(() => {
-                Log($"⚠️ ТЕРМОЗАЩИТА: {reason}. Битрейт временно снижен до {reducedBitrate} Mbps.");
-                trayIcon?.UpdateTip($"H3H Cam · ТЕРМОЗАЩИТА {temp:F0} °C · {reducedBitrate} Mbps");
+                Log(L.Format("s_1fb6a0a12d0b", reason, reducedBitrate));
+                trayIcon?.UpdateTip(L.Format("s_3244b557ab19", temp, reducedBitrate));
                 if (engine?.Running == true) {
                     var s = Read();
                     s.BitrateMbps = reducedBitrate;
@@ -209,7 +213,7 @@ public partial class MainWindow : Window {
                 }
             }),
             onRestore: (origBitrate, temp) => Dispatcher.Invoke(() => {
-                Log($"❄️ ТЕРМОЗАЩИТА: Процессор остыл ({temp:F1} °C). Исходный битрейт {origBitrate} Mbps восстановлен.");
+                Log(L.Format("s_9de2c346447a", temp, origBitrate));
                 if (engine?.Running == true) {
                     _ = engine.UpdateControls(Read(), CancellationToken.None);
                 }
@@ -223,7 +227,7 @@ public partial class MainWindow : Window {
                 var devs = await AdbController.ListDevicesAsync(settings.AdbPath, CancellationToken.None);
                 var usbDev = devs.FirstOrDefault(d => !d.IsNetwork && d.Authorized);
                 if (usbDev != null) {
-                    Log($"Подключен телефон по USB ({usbDev.Display}) — автозапуск потока");
+                    Log(L.Format("s_25c687dc8988", usbDev.Display));
                     await Start();
                 }
             } catch { }
@@ -236,11 +240,11 @@ public partial class MainWindow : Window {
                 Hide();
             }
             if (safeMode) {
-                Log("Безопасный запуск: автоматический поиск и запуск потока отключены на эту сессию.");
+                Log(L.Get("s_96cf73b80ba7"));
             } else if (settings.AutoStart) await Start();
             else await Scan(showErrors: false,allowUsbSwitch:false);
         };
-        Log("Настройки: " + Settings.FilePath);
+        Log(L.Get("s_b3f65a721581") + Settings.FilePath);
     }
 
     private void QueueSave() {
@@ -429,10 +433,10 @@ public partial class MainWindow : Window {
     }
 
     private void UpdateDevices(IEnumerable<AdbDevice> found, string selectedSerial) {
-        var choices = new List<Choice> { new("", "Авто · выбрать подходящий телефон") };
+        var choices = new List<Choice> { new("", L.Get("s_2a4ac51473d9")) };
         choices.AddRange(found.Select(d => new Choice(d.Serial, d.Display)));
         if (!string.IsNullOrWhiteSpace(selectedSerial) && choices.All(x => x.Key != selectedSerial))
-            choices.Add(new Choice(selectedSerial, "Сохранённый · " + selectedSerial));
+            choices.Add(new Choice(selectedSerial, L.Get("s_9c1cb78c9c48") + selectedSerial));
         DeviceChoice.ItemsSource = choices;
         DeviceChoice.SelectedValue = selectedSerial;
         if (DeviceChoice.SelectedIndex < 0) DeviceChoice.SelectedIndex = 0;
@@ -441,11 +445,11 @@ public partial class MainWindow : Window {
     private void ApplyCapabilities(PhoneCapabilities? value, string cameraKey, int width, int height, int fps) {
         capabilities = value;
         var cameras = new List<CameraCapability> {
-            new() { Key = "auto", Label = "Авто · основная задняя" }
+            new() { Key = "auto", Label = L.Get("s_602ade2abfab") }
         };
         if (value != null) cameras.AddRange(value.Cameras);
         if (cameraKey != "auto" && cameras.All(x => x.Key != cameraKey))
-            cameras.Add(new CameraCapability { Key = cameraKey, Label = "Сохранённый модуль · " + cameraKey });
+            cameras.Add(new CameraCapability { Key = cameraKey, Label = L.Get("s_fea1da995ac5") + cameraKey });
         CameraChoice.ItemsSource = cameras;
         CameraChoice.SelectedValue = cameraKey;
         if (CameraChoice.SelectedIndex < 0) CameraChoice.SelectedIndex = 0;
@@ -456,10 +460,10 @@ public partial class MainWindow : Window {
         }
         RefreshModes(width, height, fps);
         if (value == null) {
-            CameraHint.Text = "После поиска здесь появятся все камеры, которые Android открыл через Camera2.";
+            CameraHint.Text = L.Get("s_3b4ff0e8a258");
         } else {
-            CameraHint.Text = $"{value.Manufacturer} {value.Model} · Android {value.Sdk} · Camera2 модулей: {value.Cameras.Count}. " +
-                "Некоторые прошивки скрывают tele/ultrawide от сторонних приложений.";
+            CameraHint.Text = L.Format("s_bcb8913a046c", value.Manufacturer, value.Model, value.Sdk, value.Cameras.Count) +
+                L.Get("s_686f6c605375");
         }
     }
 
@@ -499,6 +503,7 @@ public partial class MainWindow : Window {
         var mode = ResolutionChoice.SelectedItem as VideoCapability;
         var fps = (Fps.SelectedItem as FpsChoice)?.Value ?? settings.Fps;
         return new Settings {
+            Language = LanguageChoice.SelectedIndex switch { 1 => "ru", 2 => "en", _ => "auto" },
             Transport = TransportValue(Transport.SelectedIndex),
             PhoneIp = PhoneIp.Text.Trim(),
             PcIp = PcIp.Text.Trim(),
@@ -651,6 +656,7 @@ public partial class MainWindow : Window {
         var level = (text.Contains("ошибк", StringComparison.OrdinalIgnoreCase) || 
                      text.Contains("error", StringComparison.OrdinalIgnoreCase) || 
                      text.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                     text.Contains("could not", StringComparison.OrdinalIgnoreCase) ||
                      text.Contains("exception", StringComparison.OrdinalIgnoreCase)) 
                      ? LogLevel.Error 
                      : (text.Contains("предупрежд", StringComparison.OrdinalIgnoreCase) || text.Contains("warn", StringComparison.OrdinalIgnoreCase))
@@ -668,7 +674,7 @@ public partial class MainWindow : Window {
         ScanButton.IsEnabled = !busy && !running;
         SettingsPanel.IsEnabled = !busy;
         if (BasicStartButton != null) {
-            BasicStartButton.Content = running ? "■  ОСТАНОВИТЬ ТРАНСЛЯЦИЮ" : "▶  НАЧАТЬ ТРАНСЛЯЦИЮ";
+            BasicStartButton.Content = running ? L.Get("s_b2e4dba597c4") : L.Get("s_9825166bb975");
             BasicStartButton.Background = running ? new SolidColorBrush(Color.FromRgb(180, 50, 50)) : new SolidColorBrush(Color.FromRgb(28, 169, 137));
             BasicStartButton.Foreground = running ? Brushes.White : new SolidColorBrush(Color.FromRgb(4, 28, 22));
             BasicStartButton.IsEnabled = running || !busy;
@@ -684,6 +690,22 @@ public partial class MainWindow : Window {
         QueueSave();
     }
 
+    private void LanguageChoice_Changed(object sender, SelectionChangedEventArgs e) {
+        if (filling || settings == null) return;
+        settings.Language = LanguageChoice.SelectedIndex switch { 1 => "ru", 2 => "en", _ => "auto" };
+        var previousFilling = filling;
+        filling = true;
+        try {
+            L.Configure(settings.Language);
+            if (Application.Current != null) foreach (Window window in Application.Current.Windows) L.RefreshWindow(window);
+            UpdateModeUI();
+            Buttons();
+            UpdateVirtualCamStatus();
+            Read().Save();
+        } catch (Exception ex) { Log("Language: " + ex.Message); }
+        finally { filling = previousFilling; }
+    }
+
     private void UpdateModeUI() {
         if (settings == null || BasicPanel == null || SettingsPanel == null || ModeToggleButton == null) return;
         BasicVirtualCamCheck.IsChecked = VirtualCamera.IsChecked;
@@ -692,12 +714,12 @@ public partial class MainWindow : Window {
         if (settings.ProMode) {
             BasicPanel.Visibility = Visibility.Collapsed;
             SettingsPanel.Visibility = Visibility.Visible;
-            ModeToggleButton.Content = "Простой режим";
+            ModeToggleButton.Content = L.Get("s_f6066218832c");
             ProPresetBar.Visibility = Visibility.Visible;
         } else {
             BasicPanel.Visibility = Visibility.Visible;
             SettingsPanel.Visibility = Visibility.Collapsed;
-            ModeToggleButton.Content = "Все настройки";
+            ModeToggleButton.Content = L.Get("s_f9a245781fea");
             ProPresetBar.Visibility = Visibility.Collapsed;
         }
     }
@@ -778,28 +800,28 @@ public partial class MainWindow : Window {
         try {
             var report = DiagnosticsReport.Generate(Read(), lastStatus, null, engine?.ConnectionManager);
             Clipboard.SetText(report);
-            Log("📋 Структурированный отчёт о системе скопирован в буфер обмена.");
-        } catch (Exception ex) { Log("Ошибка копирования диагностики: " + ex.Message); }
+            Log(L.Get("s_ce4a2d2ee47a"));
+        } catch (Exception ex) { Log(L.Get("s_d5e2478e2b00") + ex.Message); }
     }
 
     private void OpenLogsFolder_Click(object sender, RoutedEventArgs e) {
         try {
             RollingLogger.OpenFolder();
-            Log($"📁 Папка логов открыта: {RollingLogger.LogDir}");
-        } catch (Exception ex) { Log("Ошибка открытия папки логов: " + ex.Message); }
+            Log(L.Format("s_72eb109b619c", RollingLogger.LogDir));
+        } catch (Exception ex) { Log(L.Get("s_aa41a39815df") + ex.Message); }
     }
 
     private void CopyLastErrors_Click(object sender, RoutedEventArgs e) {
         try {
             var errors = App.Logger.GetRecentErrors();
             if (errors.Length == 0) {
-                Clipboard.SetText("Ошибок в текущей сессии не зафиксировано.");
-                Log("ℹ️ В журнале нет ошибок.");
+                Clipboard.SetText(L.Get("s_51087eafa3e1"));
+                Log(L.Get("s_f019855b5561"));
             } else {
                 Clipboard.SetText(string.Join(Environment.NewLine, errors));
-                Log($"⚠️ Скопировано {errors.Length} последних ошибок в буфер обмена.");
+                Log(L.Format("s_b61b1d1b2b72", errors.Length));
             }
-        } catch (Exception ex) { Log("Ошибка копирования ошибок: " + ex.Message); }
+        } catch (Exception ex) { Log(L.Get("s_01480d6d823a") + ex.Message); }
     }
 
     private async Task Scan(bool showErrors = true,bool allowUsbSwitch=true) {
@@ -826,9 +848,9 @@ public partial class MainWindow : Window {
                 settings = next;
                 ApplyCapabilities(directPhone, settings.CameraKey, settings.Width, settings.Height, settings.Fps);
                 settings.Save();
-                DeviceHint.Text = $"Готово: {directPhone.Manufacturer} {directPhone.Model}. USB Direct без ADB.";
+                DeviceHint.Text = L.Format("s_e763f9bf6fd9", directPhone.Manufacturer, directPhone.Model);
                 ConnectionLabel.Text = "●  " + directPhone.Model;
-                StateText.Text = $"Телефон найден без режима разработчика. Доступно камер: {directPhone.Cameras.Count}.";
+                StateText.Text = L.Format("s_ecfb2b6a1513", directPhone.Cameras.Count);
                 return;
             }
             var controller = new AdbController(next, Log);
@@ -840,13 +862,13 @@ public partial class MainWindow : Window {
             UpdateDevices(controller.Devices, controller.Serial);
             ApplyCapabilities(phone, settings.CameraKey, settings.Width, settings.Height, settings.Fps);
             settings.Save();
-            DeviceHint.Text = $"Готово: {controller.Device?.Display ?? controller.Serial}. Подключение {controller.EffectiveTransport.ToUpperInvariant()}.";
+            DeviceHint.Text = L.Format("s_5ad16b250cba", controller.Device?.Display ?? controller.Serial, controller.EffectiveTransport.ToUpperInvariant());
             ConnectionLabel.Text = "●  " + (controller.Device?.Model.Replace('_', ' ') ?? controller.Serial);
-            StateText.Text = $"Телефон найден. Доступно камер: {phone.Cameras.Count}.";
+            StateText.Text = L.Format("s_501a0c9993b4", phone.Cameras.Count);
         } catch (OperationCanceledException) {
-            if (showErrors) Log("Поиск отменён");
+            if (showErrors) Log(L.Get("s_c1a883622f70"));
         } catch (Exception ex) {
-            Log("ПОИСК: " + ex.Message);
+            Log(L.Get("s_da6a0dca6635") + ex.Message);
             DeviceHint.Text = ex.Message;
             if (showErrors) StateText.Text = ex.Message;
         } finally {
@@ -857,19 +879,19 @@ public partial class MainWindow : Window {
     }
 
     private async void Usb60_Click(object sender, RoutedEventArgs e) {
-        if (busy || engine?.Running == true) { Log("Остановите поток перед выбором USB 60 FPS."); return; }
+        if (busy || engine?.Running == true) { Log(L.Get("s_ee8515ed216a")); return; }
         Transport.SelectedIndex = 2;
         await Scan(showErrors: true);
         var mode = SelectedCamera()?.Modes.Where(x => x.Fps.Contains(60))
             .OrderByDescending(x => (long)x.Width * x.Height).FirstOrDefault();
-        if (mode == null) { Log("Выбранная камера не сообщает режим 60 FPS. Проверьте выбранный модуль и версию APK."); return; }
+        if (mode == null) { Log(L.Get("s_398c43dff846")); return; }
         ResolutionChoice.SelectedItem = mode;
         RefreshFps(60);
         LowLatency.IsChecked = true;
         ScreenOff.IsChecked = true;
         Bitrate.Text = "32";
         Read().Save();
-        StateText.Text = $"USB · {mode.Width}×{mode.Height} · 60 FPS · 32 Мбит/с. Нажмите START.";
+        StateText.Text = L.Format("s_568c00585c0d", mode.Width, mode.Height);
     }
 
     private async Task Start(bool restart = false) {
@@ -987,11 +1009,11 @@ public partial class MainWindow : Window {
             filling = false;
             ConnectionLabel.Text = "●  Android connected";
         } catch (OperationCanceledException) {
-            Log("Запуск отменён");
+            Log(L.Get("s_b0717c829207"));
         } catch (Exception ex) {
             Log("START: " + ex.Message);
             StateText.Text = ex.Message;
-            ConnectionLabel.Text = "●  Ошибка подключения";
+            ConnectionLabel.Text = L.Get("s_695dfa7ab99f");
             if (engine != null) await engine.DisposeAsync();
             engine = null;
         } finally {
@@ -1016,11 +1038,11 @@ public partial class MainWindow : Window {
             var choices = Fps.Items.OfType<FpsChoice>().ToList();
             Fps.SelectedItem = choices.FirstOrDefault(x => x.Value == 30) ?? choices.FirstOrDefault();
             Bitrate.Text = "12";
-            PowerModeHint.Text = "Power Saving: 30 FPS и 12 Mbps применены на лету для снижения нагрева и экономии батареи.";
-            Log("🔋 Включён режим Power Saving: 30 FPS · 12 Mbps");
+            PowerModeHint.Text = L.Get("s_3a11bc861ccc");
+            Log(L.Get("s_25cf11b085b2"));
         } else if (PowerMode.SelectedIndex == 0) {
-            PowerModeHint.Text = "Maximum Quality сохраняет выбранные параметры и приоритет минимальной задержки.";
-        } else PowerModeHint.Text = "Balanced сохраняет выбранные разрешение, FPS и битрейт.";
+            PowerModeHint.Text = L.Get("s_832a31233ff4");
+        } else PowerModeHint.Text = L.Get("s_0dc17b2fea47");
 
         QueueSave();
         if (engine?.Running == true) {
@@ -1039,11 +1061,11 @@ public partial class MainWindow : Window {
             else await active.UpdateControls(current, CancellationToken.None);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { Log("Не удалось применить настройки: " + ex.Message); }
+        catch (Exception ex) { Log(L.Get("s_516219d62901") + ex.Message); }
     }
 
     private void ShowStatus(LiveStatus s) {
-        StateText.Text = s.State;
+        StateText.Text = L.PhoneText(L.Relocalize(s.State));
         RateText.Text = $"{s.ReceivedMbps:F2} Mbps";
         FpsText.Text = $"{s.DetectedFps:F1} / {s.RequestedFps}";
         ConnectionLabel.Text = "●  " + s.Serial;
@@ -1052,11 +1074,12 @@ public partial class MainWindow : Window {
         var dropStr = s.DroppedFrames > 0 ? $"  ·  drop {s.DroppedFrames}" : "";
         var latStr = s.LatencyMs > 0 ? $"  ·  RTP jitter {s.LatencyMs:F0}ms" : "";
         TechnicalText.Text = $"{s.Transport}  ·  {s.Resolution}{latStr}\nEncoder {s.EncodedMbps:F2} Mbps  ·  {s.Packets:N0} pkts{lossStr}{recStr}{dropStr}\nFFmpeg {s.Ffmpeg}  ·  {s.Elapsed:hh\\:mm\\:ss}\n{s.Thermal}";
-        DetailText.Text = s.Details;
+        TechnicalText.Text = L.PhoneText(TechnicalText.Text);
+        DetailText.Text = L.PhoneText(s.Details);
         lastStatus = s;
         lastPower = s.Power;
         powerHistory.Add(s.Power);
-        PowerSourceText.Text = "Источник: " + s.Power.Source;
+        PowerSourceText.Text = L.Get("s_f30d1d487948") + s.Power.Source;
         PowerHeadlineText.Text = s.Power.Headline;
         var cpuStr = (s.Power.CpuTemperatureC != null || s.Power.CpuPercent != null)
             ? $"CPU {PowerValue(s.Power.CpuTemperatureC, "0.0", "°C")} ({PowerValue(s.Power.CpuPercent, "0.0", "%")})  ·  "
@@ -1070,7 +1093,7 @@ public partial class MainWindow : Window {
         thermalGuard?.UpdateTelemetry(s.Power.CpuTemperatureC, s.Power.TemperatureC);
         trayIcon?.UpdateTip($"H3H Cam · {s.State} · {s.DetectedFps:F0} FPS · {s.ReceivedMbps:F1} Mbps");
         if (BasicDeviceNameText != null) {
-            BasicDeviceNameText.Text = string.IsNullOrWhiteSpace(s.Serial) ? "Подключено" : s.Serial;
+            BasicDeviceNameText.Text = string.IsNullOrWhiteSpace(s.Serial) ? L.Get("s_105fe2f786c3") : s.Serial;
             BasicTransportBadge.Text = s.Transport.ToUpperInvariant();
             BasicBatteryText.Text = $"🔋 {s.Power.Headline}  ·  {(s.Power.TemperatureC.HasValue ? s.Power.TemperatureC.Value.ToString("F1") + " °C" : "")}";
             BasicTransportText.Text = $"{s.Resolution} @ {s.DetectedFps:F0} FPS  ·  {s.ReceivedMbps:F1} Mbps  ·  {s.Thermal}";
@@ -1128,12 +1151,12 @@ public partial class MainWindow : Window {
         Buttons();
         try {
             if (engine != null) await engine.Stop();
-            StateText.Text = "Остановлено";
-            ConnectionLabel.Text = "●  Готов к подключению";
+            StateText.Text = L.Get("s_3028fa0907c0");
+            ConnectionLabel.Text = L.Get("s_b37981243396");
             if (BasicDeviceNameText != null) {
-                BasicDeviceNameText.Text = "Телефон готов к подключению";
-                BasicTransportBadge.Text = "ОСТАНОВЛЕНО";
-                BasicTransportText.Text = "Выберите подключение и нажмите «Найти телефон».";
+                BasicDeviceNameText.Text = L.Get("s_07a71c8952df");
+                BasicTransportBadge.Text = L.Get("s_c04cb19740df");
+                BasicTransportText.Text = L.Get("s_befdd34ad631");
             }
             previewBitmap = null;
             LivePreviewImage.Source = null;
@@ -1158,8 +1181,8 @@ public partial class MainWindow : Window {
             await test.Test(operation.Token);
             if (settings.Transport == "direct") {
                 settings.Save();
-                ConnectionLabel.Text = "●  Проверка пройдена";
-                StateText.Text = "USB Direct и видеоканал работают без ADB.";
+                ConnectionLabel.Text = L.Get("s_0c48f4ab1e5b");
+                StateText.Text = L.Get("s_44e33ad39a57");
                 return;
             }
             var controller = new AdbController(settings, Log);
@@ -1171,12 +1194,12 @@ public partial class MainWindow : Window {
             ApplyCapabilities(phone, settings.CameraKey, settings.Width, settings.Height, settings.Fps);
             filling = false;
             settings.Save();
-            ConnectionLabel.Text = "●  Проверка пройдена";
-            StateText.Text = "ADB, удалённый запуск и видеоканал работают.";
+            ConnectionLabel.Text = L.Get("s_0c48f4ab1e5b");
+            StateText.Text = L.Get("s_2ea6e62d5e86");
         } catch (Exception ex) {
-            Log("ПРОВЕРКА: " + ex.Message);
+            Log(L.Get("s_703452b3f462") + ex.Message);
             StateText.Text = ex.Message;
-            ConnectionLabel.Text = "●  Ошибка проверки";
+            ConnectionLabel.Text = L.Get("s_4913b0c30b5d");
         } finally {
             filling = false;
             busy = false;
@@ -1235,7 +1258,7 @@ public partial class MainWindow : Window {
 
         if (target != null) {
             CameraChoice.SelectedValue = target.Key;
-            Log($"Объектив переключен на лету: {target.Label}");
+            Log(L.Format("s_8002c28153b7", target.Label));
             if (engine?.Running == true) {
                 var current = Read();
                 _ = engine.UpdateControls(current, CancellationToken.None);
@@ -1250,8 +1273,8 @@ public partial class MainWindow : Window {
             };
             settings.Zoom = zoomTarget;
             Log(capabilities == null 
-                ? $"Применён цифровой масштаб {zoomTarget:F1}x." 
-                : $"Аппаратный {type}-объектив не обнаружен; применён масштаб {zoomTarget:F1}x.");
+                ? L.Format("s_9ca724f4b372", zoomTarget)
+                : L.Format("s_9415ffcc9a10", type, zoomTarget));
             QueueSave();
             if (engine?.Running == true) {
                 var current = Read();
@@ -1277,7 +1300,7 @@ public partial class MainWindow : Window {
             WbStatusBadge.Text = $"{settings.ManualWbKelvin} K";
             WbStatusBadge.Foreground = new SolidColorBrush(Color.FromRgb(0x42, 0xD8, 0xB2));
             if (WbCalibrationDetails != null) {
-                WbCalibrationDetails.Text = $"Зафиксировано: {settings.ManualWbKelvin} K (R:{settings.WbRedGain:F2}, B:{settings.WbBlueGain:F2})";
+                WbCalibrationDetails.Text = L.Format("s_8f0a1929105e", settings.ManualWbKelvin, settings.WbRedGain, settings.WbBlueGain);
                 WbCalibrationDetails.Visibility = Visibility.Visible;
             }
         } else {
@@ -1310,7 +1333,7 @@ public partial class MainWindow : Window {
             Volatile.Write(ref requestedSnapshotFrame, request);
             engine.SetPreviewActivity(true);
             try { await request.Task.WaitAsync(TimeSpan.FromSeconds(2)); }
-            catch (TimeoutException) { Log("Снимок невозможен: новый кадр не поступил."); return; }
+            catch (TimeoutException) { Log(L.Get("s_9274203cc23e")); return; }
             finally { Volatile.Write(ref requestedSnapshotFrame, null); UpdatePreviewActivity(); }
         }
         byte[]? snapFrame = null;
@@ -1325,7 +1348,7 @@ public partial class MainWindow : Window {
         }
 
         if (snapFrame == null || frameW <= 0 || frameH <= 0) {
-            Log("⚠️ Снимок невозможен: нет активного кадра предпросмотра. Запустите поток.");
+            Log(L.Get("s_fcb8cd6097ad"));
             return;
         }
 
@@ -1338,11 +1361,11 @@ public partial class MainWindow : Window {
                     snapFrame, frameW, frameH, upscale4K: settings.SuperResolution4K);
                 double mb = size / (1024.0 * 1024.0);
                 Dispatcher.Invoke(() => {
-                    Log($"📸 Снимок сохранён: {Path.GetFileName(filePath)} ({w}×{h}, {mb:F1} МБ)");
-                    trayIcon?.ShowBalloon("H3H Cam • Снимок сохранён", $"{Path.GetFileName(filePath)} ({w}×{h}, {mb:F1} МБ)");
+                    Log(L.Format("s_da08d95373ce", Path.GetFileName(filePath), w, h, mb));
+                    trayIcon?.ShowBalloon(L.Get("s_6aaadcb873c3"), L.Format("s_4de6c38fc54f", Path.GetFileName(filePath), w, h, mb));
                 });
             } catch (Exception ex) {
-                Dispatcher.Invoke(() => Log("⚠️ Ошибка сохранения снимка: " + ex.Message));
+                Dispatcher.Invoke(() => Log(L.Get("s_6b2995c96609") + ex.Message));
             }
         });
     }
@@ -1354,7 +1377,7 @@ public partial class MainWindow : Window {
 
     public void ToggleRecording() {
         if (engine == null || !engine.Running) {
-            Log("⚠️ Запустите поток перед началом записи");
+            Log(L.Get("s_363281ec9f64"));
             return;
         }
 
@@ -1363,16 +1386,16 @@ public partial class MainWindow : Window {
             UpdateRecordUi(false, TimeSpan.Zero);
             previewWindow?.UpdateRecordState(false, TimeSpan.Zero);
             double mb = size / (1024.0 * 1024.0);
-            Log($"🔴 Запись остановлена: {Path.GetFileName(path)} ({mb:F1} МБ, {duration:mm\\:ss})");
-            trayIcon?.ShowBalloon("H3H Cam • Запись завершена", $"{Path.GetFileName(path)} ({mb:F1} МБ, {duration:mm\\:ss})");
+            Log(L.Format("s_59712ad503b8", Path.GetFileName(path), mb, duration));
+            trayIcon?.ShowBalloon(L.Get("s_473ecd2ec400"), L.Format("s_0861a28945d3", Path.GetFileName(path), mb, duration));
         } else {
             try {
                 var path = engine.StartRecording();
                 UpdateRecordUi(true, TimeSpan.Zero);
                 previewWindow?.UpdateRecordState(true, TimeSpan.Zero);
-                Log($"🔴 Начата прямая запись MP4: {Path.GetFileName(path)}");
+                Log(L.Format("s_cf8d38e5cdd7", Path.GetFileName(path)));
             } catch (Exception ex) {
-                Log("⚠️ Ошибка старта записи: " + ex.Message);
+                Log(L.Get("s_324f16954d36") + ex.Message);
             }
         }
     }
@@ -1383,7 +1406,7 @@ public partial class MainWindow : Window {
         if (RecBadgeText != null && isRecording)
             RecBadgeText.Text = $"🔴 REC {elapsed:mm\\:ss}";
         if (RecordButton != null) {
-            RecordButton.Content = isRecording ? $"⏹️ СТОП ({elapsed:mm\\:ss})" : "🔴 ЗАПИСЬ";
+            RecordButton.Content = isRecording ? L.Format("s_4d566ce84b70", elapsed) : L.Get("s_70c75c89eb79");
             RecordButton.Background = isRecording
                 ? new SolidColorBrush(Color.FromRgb(90, 18, 26))
                 : new SolidColorBrush(Color.FromRgb(42, 20, 26));
@@ -1395,10 +1418,10 @@ public partial class MainWindow : Window {
 
     private void CalibrateWb_Click(object sender, RoutedEventArgs e) {
         if (engine?.Running != true) {
-            Log("⚠️ Сначала запустите трансляцию, затем наведите центр кадра на белый лист бумаги.");
+            Log(L.Get("s_d703aaece641"));
             MessageBox.Show(
-                "Для калибровки баланса белого сначала запустите трансляцию камеры.\nЗатем поднесите обычный белый лист бумаги к объективу так, чтобы он закрывал центр кадра, и нажмите эту кнопку.",
-                "H3H Cam — Калибровка баланса белого",
+                L.Get("s_7106ba26fb3b"),
+                L.Get("s_057ad5490418"),
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
@@ -1416,7 +1439,7 @@ public partial class MainWindow : Window {
         }
 
         if (sampleFrame == null || frameW <= 0 || frameH <= 0) {
-            Log("⚠️ Видеокадр ещё не получен для анализа. Подождите секунду.");
+            Log(L.Get("s_5ed05f637ddb"));
             return;
         }
 
@@ -1424,7 +1447,7 @@ public partial class MainWindow : Window {
         if (WbTargetBox != null) {
             WbTargetBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0x00, 0xFF, 0xB2));
             if (WbTargetBoxText != null) {
-                WbTargetBoxText.Text = "🎯 Анализ листа...";
+                WbTargetBoxText.Text = L.Get("s_2b612c03931a");
                 WbTargetBoxText.Foreground = new SolidColorBrush(Color.FromRgb(0x00, 0xFF, 0xB2));
             }
             WbTargetBox.Visibility = Visibility.Visible;
@@ -1437,7 +1460,7 @@ public partial class MainWindow : Window {
             Log(res.Message);
             if (WbTargetBox != null && WbTargetBoxText != null) {
                 WbTargetBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x55, 0x55));
-                WbTargetBoxText.Text = "⚠️ Не распознано";
+                WbTargetBoxText.Text = L.Get("s_699eccfb8999");
                 WbTargetBoxText.Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x55, 0x55));
             }
             if (WbCalibrationDetails != null) {
@@ -1476,7 +1499,7 @@ public partial class MainWindow : Window {
 
         if (WbTargetBox != null && WbTargetBoxText != null) {
             WbTargetBox.BorderBrush = new SolidColorBrush(Color.FromRgb(0x42, 0xD8, 0xB2));
-            WbTargetBoxText.Text = $"✅ {res.EstimatedKelvin} K откалиброван";
+            WbTargetBoxText.Text = L.Format("s_007f45a3f85b", res.EstimatedKelvin);
             WbTargetBoxText.Foreground = new SolidColorBrush(Color.FromRgb(0x42, 0xD8, 0xB2));
         }
 
@@ -1510,7 +1533,7 @@ public partial class MainWindow : Window {
             filling = false;
         }
 
-        Log("↺ Баланс белого сброшен на Auto (AWB).");
+        Log(L.Get("s_0784d669989a"));
         QueueSave();
 
         if (engine?.Running == true) {
@@ -1523,11 +1546,11 @@ public partial class MainWindow : Window {
     private void UpdateVirtualCamStatus() {
         var status = VirtualCameraDriver.GetStatus();
         VirtualCamStatusText.Text = status.Ready
-            ? $"● {status.Message}. Выберите её в приложении видеозвонков."
-            : $"● {status.Message}. Установка выполняется при включении или старте.";
+            ? L.Format("s_06cd7525cdfb", status.Message)
+            : L.Format("s_e3a8076de070", status.Message);
         VirtualCamStatusText.Foreground = new SolidColorBrush(status.Ready
             ? Color.FromRgb(112, 229, 195) : Color.FromRgb(245, 184, 92));
-        InstallVirtualCamButton.Content = "Установить / восстановить камеру";
+        InstallVirtualCamButton.Content = L.Get("s_559aaeb2dac7");
         InstallVirtualCamButton.Visibility = status.Ready ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -1537,12 +1560,12 @@ public partial class MainWindow : Window {
         try {
             virtualCamInstall ??= VirtualCameraDriver.InstallAsync();
             bool success = await virtualCamInstall;
-            if (!success) throw new IOException("Регистрация камеры не подтверждена");
-            Log($"Виртуальная камера: {VirtualCameraDriver.GetStatus().DeviceName}. Обновите список камер или перезапустите приложение видеозвонков.");
+            if (!success) throw new IOException(L.Get("s_081b3a1e7eb2"));
+            Log(L.Format("s_36790668248c", VirtualCameraDriver.GetStatus().DeviceName));
             return true;
         } catch (Exception ex) {
-            Log("Ошибка установки виртуальной камеры: " + ex.Message);
-            MessageBox.Show(ex.Message, "Виртуальная камера", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Log(L.Get("s_57b94641fcd3") + ex.Message);
+            MessageBox.Show(ex.Message, L.Get("s_86565540c018"), MessageBoxButton.OK, MessageBoxImage.Warning);
             return false;
         } finally {
             virtualCamInstall = null;
@@ -1575,7 +1598,7 @@ public partial class MainWindow : Window {
             var qrBmp = QrCodeGenerator.GenerateBitmap(connectUri, scale: 9, border: 4);
 
             var qrWin = new Window {
-                Title = "H3H Cam — Быстрое сопряжение по Wi-Fi",
+                Title = L.Get("s_b4ae5af1d571"),
                 Width = 420,
                 Height = 520,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -1585,14 +1608,14 @@ public partial class MainWindow : Window {
             };
             var root = new StackPanel { Margin = new Thickness(24) };
             root.Children.Add(new TextBlock {
-                Text = "📱 Быстрое сопряжение по Wi-Fi",
+                Text = L.Get("s_4c14642081ee"),
                 FontSize = 18,
                 FontWeight = FontWeights.Bold,
                 Foreground = Brushes.White,
                 Margin = new Thickness(0, 0, 0, 8)
             });
             root.Children.Add(new TextBlock {
-                Text = $"Нажмите «📡 НАЙТИ КОМПЬЮТЕР» в приложении на телефоне или подключитесь по адресу {pcIp}:{current.RtpPort}",
+                Text = L.Format("s_4113ce7323a2", pcIp, current.RtpPort),
                 Foreground = new SolidColorBrush(Color.FromRgb(132, 152, 180)),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, 16)
@@ -1608,7 +1631,7 @@ public partial class MainWindow : Window {
             root.Children.Add(img);
 
             var statusBlock = new TextBlock {
-                Text = "Маяк UDP (порт 5005) активен в локальной сети...",
+                Text = L.Get("s_d975b52d3ec7"),
                 Foreground = new SolidColorBrush(Color.FromRgb(112, 229, 195)),
                 FontSize = 12,
                 HorizontalAlignment = HorizontalAlignment.Center
@@ -1622,7 +1645,7 @@ public partial class MainWindow : Window {
     private void ClearLog_Click(object sender, RoutedEventArgs e) => LogBox.Clear();
 
     private void Browse_Click(object sender, RoutedEventArgs e) {
-        var dialog = new OpenFileDialog { Filter = "Программы (*.exe)|*.exe" };
+        var dialog = new OpenFileDialog { Filter = L.Get("s_684ffe9059b6") };
         if (dialog.ShowDialog() == true && sender is Button button &&
             FindName((string)button.Tag) is TextBox box) box.Text = dialog.FileName;
     }
@@ -1632,7 +1655,7 @@ public partial class MainWindow : Window {
             var path = ToolPaths.Find("obs64.exe", ObsPath.Text.Trim());
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path)! });
             if (VirtualCamera.IsChecked == true)
-                Log($"OBS: источник «Устройство захвата видео» → {VirtualCameraDriver.GetStatus().DeviceName}; выберите фактические разрешение/FPS потока, буферизация: отключить. Выход «Запустить виртуальную камеру» в OBS должен быть выключен.");
+                Log(L.Format("s_8ff2b3893038", VirtualCameraDriver.GetStatus().DeviceName));
             else Log($"OBS: Media Source → Local file off → udp://127.0.0.1:{ObsPort.Text}?fifo_size=4096&overrun_nonfatal=1");
         } catch (Exception ex) { Log(ex.Message); }
     }
@@ -1692,9 +1715,9 @@ public partial class MainWindow : Window {
                 }
             }
 
-            Log($"Диагностика экспортирована в: {zipPath}");
+            Log(L.Format("s_e494ae446951", zipPath));
             Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{zipPath}\"") { UseShellExecute = true });
-        } catch (Exception ex) { Log("Экспорт диагностики: " + ex.Message); }
+        } catch (Exception ex) { Log(L.Get("s_83b25b333786") + ex.Message); }
     }
 
     public static string MaskIp(string ip) {
@@ -1717,7 +1740,7 @@ public partial class MainWindow : Window {
     private void LatencyTest_Click(object sender, RoutedEventArgs e) {
         try {
             var win = new Window {
-                Title = "H3H Cam — Тест задержки (наведите камеру на это окно)",
+                Title = L.Get("s_ad80f438b169"),
                 Width = 500,
                 Height = 500,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
@@ -1726,7 +1749,7 @@ public partial class MainWindow : Window {
             var panel = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
             var box = new System.Windows.Shapes.Rectangle { Width = 260, Height = 260, Fill = Brushes.White, Margin = new Thickness(0, 0, 0, 16) };
             var text = new TextBlock { FontSize = 28, FontWeight = FontWeights.Bold, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center };
-            var hint = new TextBlock { Text = "Сравните показания времени в окне и на превью", Foreground = Brushes.Gray, FontSize = 12, Margin = new Thickness(0, 8, 0, 0), HorizontalAlignment = HorizontalAlignment.Center };
+            var hint = new TextBlock { Text = L.Get("s_5a920fd3d452"), Foreground = Brushes.Gray, FontSize = 12, Margin = new Thickness(0, 8, 0, 0), HorizontalAlignment = HorizontalAlignment.Center };
             panel.Children.Add(box);
             panel.Children.Add(text);
             panel.Children.Add(hint);
@@ -1742,8 +1765,8 @@ public partial class MainWindow : Window {
             win.Closed += (_, _) => timer.Stop();
             timer.Start();
             win.Show();
-            Log("Запущен экран теста задержки. Наведите камеру телефона на мигающий квадрат и замерьте разницу времени.");
-        } catch (Exception ex) { Log("Тест задержки: " + ex.Message); }
+            Log(L.Get("s_cd3e982aa118"));
+        } catch (Exception ex) { Log(L.Get("s_4fe9b2abdca2") + ex.Message); }
     }
 
 
@@ -1752,7 +1775,7 @@ public partial class MainWindow : Window {
         settings.PrivacyMute = !settings.PrivacyMute;
         PrivacyMuteButton.Background = settings.PrivacyMute ? new SolidColorBrush(Color.FromRgb(220, 60, 60)) : null;
         PrivacyMuteButton.Content = settings.PrivacyMute ? "🔒 MUTED" : "🔒 MUTE";
-        Log(settings.PrivacyMute ? "Передача новых кадров приостановлена на всех выходах. Получатель может сохранять последний кадр." : "Передача кадров возобновляется");
+        Log(settings.PrivacyMute ? L.Get("s_d9d09ce574c9") : L.Get("s_ba688cee6c83"));
         QueueSave();
         ApplyControls();
     }
@@ -1772,7 +1795,7 @@ public partial class MainWindow : Window {
         if (next != current) {
             ZoomChoice.SelectedIndex = next;
             var label = CurrentZoomLabel();
-            Log($"🔍 Зум: {label}");
+            Log(L.Format("s_85502b9c0f15", label));
             QueueSave();
             previewWindow?.UpdateZoom(label);
             UpdatePreviewResolutionBadge();
@@ -1782,7 +1805,7 @@ public partial class MainWindow : Window {
     private void ResetZoom() {
         if (ZoomChoice.SelectedIndex != 0) {
             ZoomChoice.SelectedIndex = 0;
-            Log("🔍 Зум сброшен: 1.0x");
+            Log(L.Get("s_05749525fab4"));
             QueueSave();
             previewWindow?.UpdateZoom("1.0x");
             UpdatePreviewResolutionBadge();
@@ -1793,7 +1816,7 @@ public partial class MainWindow : Window {
         AutoFraming.IsChecked = !(AutoFraming.IsChecked == true);
         var enabled = AutoFraming.IsChecked == true;
         UpdateAutoFramingUI(enabled);
-        Log(enabled ? "🤖 Авто-кадрирование лица (Center Stage) включено" : "🤖 Авто-кадрирование лица (Center Stage) выключено");
+        Log(enabled ? L.Get("s_8f93df3d20cd") : L.Get("s_262b38457974"));
         QueueSave();
     }
 
@@ -1820,26 +1843,26 @@ public partial class MainWindow : Window {
         var deadzone = AutoFramingDeadzoneSlider.Value;
 
         var zoomPlan = zoom switch {
-            < 1.15 => "Общий план (комната)",
-            < 1.45 => "Поясной план (стрим)",
-            < 1.85 => "Крупный портрет",
-            _ => "Сверхкрупный план (лицо)"
+            < 1.15 => L.Get("s_5d198941bf3d"),
+            < 1.45 => L.Get("s_28b05fe8f03c"),
+            < 1.85 => L.Get("s_c61010b68ba6"),
+            _ => L.Get("s_ecaca576a9d2")
         };
         AutoFramingZoomText.Text = $"{zoom:0.00}x · {zoomPlan}";
 
         var speedDesc = speed switch {
-            < 0.6 => "Мягкая кинематографичная",
-            < 1.4 => "Сбалансированная",
-            < 2.2 => "Быстрая",
-            _ => "Максимально резкая"
+            < 0.6 => L.Get("s_4d149324a48b"),
+            < 1.4 => L.Get("s_d39968cd3600"),
+            < 2.2 => L.Get("s_05f8c4bd74cf"),
+            _ => L.Get("s_239069f41b03")
         };
         AutoFramingSpeedText.Text = $"{speed:0.0}x · {speedDesc}";
 
         var deadzonePct = (int)Math.Round(deadzone * 100);
         var deadzoneDesc = deadzone switch {
-            < 0.03 => "Высокая чувствительность",
-            < 0.08 => "Игнорировать покачивания",
-            _ => "Широкая зона покоя"
+            < 0.03 => L.Get("s_e5d8bb650e0d"),
+            < 0.08 => L.Get("s_31f45cf3cd81"),
+            _ => L.Get("s_e97ea6fb44e8")
         };
         AutoFramingDeadzoneText.Text = $"{deadzonePct}% · {deadzoneDesc}";
     }
@@ -1851,7 +1874,7 @@ public partial class MainWindow : Window {
         AutoFraming.IsChecked = true;
         FaceTracking.IsChecked = true;
         UpdateAutoFramingSlidersText();
-        Log("🤖 Пресет автокадрирования: Кино (1.25x · 0.5x плавный · 8% зона)");
+        Log(L.Get("s_9035f57f748f"));
         QueueSave();
         controlsDebounceTimer.Stop();
         controlsDebounceTimer.Start();
@@ -1864,7 +1887,7 @@ public partial class MainWindow : Window {
         AutoFraming.IsChecked = true;
         FaceTracking.IsChecked = true;
         UpdateAutoFramingSlidersText();
-        Log("🤖 Пресет автокадрирования: Баланс (1.35x · 1.0x баланс · 5% зона)");
+        Log(L.Get("s_b881b223a516"));
         QueueSave();
         controlsDebounceTimer.Stop();
         controlsDebounceTimer.Start();
@@ -1877,7 +1900,7 @@ public partial class MainWindow : Window {
         AutoFraming.IsChecked = true;
         FaceTracking.IsChecked = true;
         UpdateAutoFramingSlidersText();
-        Log("🤖 Пресет автокадрирования: Динамичный (1.55x · 1.8x быстрый отклик · 3% зона)");
+        Log(L.Get("s_d4fdca0b6aa9"));
         QueueSave();
         controlsDebounceTimer.Stop();
         controlsDebounceTimer.Start();
@@ -1901,7 +1924,7 @@ public partial class MainWindow : Window {
         ContrastSlider.Value = 1.0;
         SaturationSlider.Value = 1.0;
         UpdateColorSlidersText();
-        Log("🎨 Цветокоррекция сброшена по умолчанию");
+        Log(L.Get("s_785ff47f035c"));
         QueueSave();
     }
 
@@ -1911,20 +1934,20 @@ public partial class MainWindow : Window {
             CustomBgPanel.Visibility = (BackgroundEffectChoice.SelectedIndex == 4) ? Visibility.Visible : Visibility.Collapsed;
         }
         if (BackgroundEffectChoice.SelectedIndex == 3) {
-            Log("💡 OBS Spout2: Для режима «AI Прозрачный фон» выберите в OBS источнике Spout Composite Mode: Alpha");
+            Log(L.Get("s_73dfa86e8a5f"));
         }
         QueueSave();
     }
 
     private void BrowseCustomBg_Click(object sender, RoutedEventArgs e) {
         var dlg = new Microsoft.Win32.OpenFileDialog {
-            Title = "Выберите изображение фона для AI замены",
-            Filter = "Изображения (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|Все файлы (*.*)|*.*",
+            Title = L.Get("s_674ba47f3b08"),
+            Filter = L.Get("s_19d41186dedb"),
             CheckFileExists = true
         };
         if (dlg.ShowDialog() == true) {
             CustomBgPathBox.Text = dlg.FileName;
-            Log($"🖼️ Выбран пользовательский AI фон: {Path.GetFileName(dlg.FileName)}");
+            Log(L.Format("s_d957251cd4c5", Path.GetFileName(dlg.FileName)));
             QueueSave();
         }
     }
@@ -1949,7 +1972,7 @@ public partial class MainWindow : Window {
         FaceTracking.IsChecked = !(FaceTracking.IsChecked == true);
         var enabled = FaceTracking.IsChecked == true;
         UpdateFaceTrackingUI(enabled);
-        Log(enabled ? "👤 Автофокус по лицу (Face Priority AF) включён" : "👤 Автофокус по лицу выключен");
+        Log(enabled ? L.Get("s_690b5eb67f02") : L.Get("s_57d62c363084"));
         QueueSave();
     }
 
@@ -2031,7 +2054,7 @@ public partial class MainWindow : Window {
             string labelText;
             Color badgeColor;
             if (face.FaceCount > 1) {
-                labelText = $"👥 {face.FaceCount} ЛИЦА · GROUP {face.CropZoom:F1}x";
+                labelText = L.Format("s_67392db825a7", face.FaceCount, face.CropZoom);
                 badgeColor = Color.FromRgb(255, 179, 0);
             } else if (settings.AutoFraming) {
                 labelText = $"🎯 TRACKING {face.CropZoom:F1}x";
@@ -2124,7 +2147,7 @@ public partial class MainWindow : Window {
                     UpdateAutoFramingUI(true);
                     SelectClosestResolution(1920, 1080);
                     SelectClosestFps(60);
-                    Log("🎛️ Применён пресет: 🎮 Стриминг (1080p60 HEVC · Spout2 Zero-Copy · Auto-Framing)");
+                    Log(L.Get("s_346cf91ccc3f"));
                     break;
 
                 case "conference":
@@ -2141,7 +2164,7 @@ public partial class MainWindow : Window {
                     UpdateAutoFramingUI(false);
                     SelectClosestResolution(1280, 720);
                     SelectClosestFps(30);
-                    Log("🎛️ Применён пресет: 💼 Конференции (720p30 AVC · DirectShow VCam · Боке фона)");
+                    Log(L.Get("s_cbe1833f5c5e"));
                     break;
 
                 case "pro":
@@ -2156,7 +2179,7 @@ public partial class MainWindow : Window {
                     SkinSmoothing.IsChecked = false;
                     SelectClosestResolution(2560, 1440);
                     SelectClosestFps(30);
-                    Log("🎛️ Применён пресет: 🎬 Pro Качество (1440p / High-bitrate HEVC · Spout2)");
+                    Log(L.Get("s_4c84daabcbd8"));
                     break;
 
                 case "eco":
@@ -2173,7 +2196,7 @@ public partial class MainWindow : Window {
                     UpdateAutoFramingUI(false);
                     SelectClosestResolution(1280, 720);
                     SelectClosestFps(30);
-                    Log("🎛️ Применён пресет: 🍃 Эко-режим (720p30 Saving · Минимальный нагрев смартфона)");
+                    Log(L.Get("s_f84580cc6849"));
                     break;
             }
         } finally {
@@ -2200,7 +2223,7 @@ public partial class MainWindow : Window {
         PopulateCustomPresets(name);
         QueueSave();
         ApplyControls();
-        Log($"🎛️ Применён пользовательский пресет: ⭐ {name}");
+        Log(L.Format("s_2f11f0889a15", name));
     }
 
     private void PopulateCustomPresets(string? selectedName = null, bool resetSelection = false) {
@@ -2210,13 +2233,13 @@ public partial class MainWindow : Window {
             var toSelect = resetSelection ? null : (selectedName ?? (CustomPresetsCombo.SelectedItem as string));
             CustomPresetsCombo.Items.Clear();
             if (settings.CustomPresets == null || settings.CustomPresets.Count == 0) {
-                CustomPresetsCombo.Items.Add(new ComboBoxItem { Content = "⭐ Мои пресеты (0)", IsEnabled = false });
+                CustomPresetsCombo.Items.Add(new ComboBoxItem { Content = L.Get("s_ca7f009d9302"), IsEnabled = false });
                 CustomPresetsCombo.SelectedIndex = 0;
                 if (DeletePresetButton != null) DeletePresetButton.IsEnabled = false;
                 return;
             }
 
-            CustomPresetsCombo.Items.Add(new ComboBoxItem { Content = $"⭐ Мои пресеты ({settings.CustomPresets.Count})", IsEnabled = false });
+            CustomPresetsCombo.Items.Add(new ComboBoxItem { Content = L.Format("s_6a51703b156f", settings.CustomPresets.Count), IsEnabled = false });
 
             var targetIndex = -1;
             var index = 1;
@@ -2254,7 +2277,7 @@ public partial class MainWindow : Window {
         if (SavePresetModal == null || PresetNameInput == null) return;
         var defaultName = CustomPresetsCombo.SelectedItem is string curName && !string.IsNullOrWhiteSpace(curName)
             ? curName
-            : $"Пресет {settings.CustomPresets.Count + 1}";
+            : L.Format("s_c45a9c6396b6", settings.CustomPresets.Count + 1);
         PresetNameInput.Text = defaultName;
         SavePresetModal.Visibility = Visibility.Visible;
         PresetNameInput.SelectAll();
@@ -2278,7 +2301,7 @@ public partial class MainWindow : Window {
     private void ConfirmSavePreset_Click(object sender, RoutedEventArgs e) {
         var name = PresetNameInput?.Text?.Trim();
         if (string.IsNullOrWhiteSpace(name)) {
-            System.Windows.MessageBox.Show("Введите название пресета", "Сохранение пресета", MessageBoxButton.OK, MessageBoxImage.Information);
+            System.Windows.MessageBox.Show(L.Get("s_635bd5f4b365"), L.Get("s_3eb16b52e926"), MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (SavePresetModal != null) SavePresetModal.Visibility = Visibility.Collapsed;
@@ -2290,14 +2313,14 @@ public partial class MainWindow : Window {
         settings.Save();
 
         PopulateCustomPresets(name);
-        Log($"💾 Пользовательский пресет '{name}' успешно сохранён!");
+        Log(L.Format("s_7fcd24ec4223", name));
     }
 
     private void DeletePreset_Click(object sender, RoutedEventArgs e) {
         if (CustomPresetsCombo?.SelectedItem is not string presetName || string.IsNullOrWhiteSpace(presetName)) return;
         var confirm = System.Windows.MessageBox.Show(
-            $"Вы действительно хотите удалить пресет '{presetName}'?",
-            "Удаление пресета",
+            L.Format("s_4e31096897cd", presetName),
+            L.Get("s_6076fb477cd6"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
         if (confirm != MessageBoxResult.Yes) return;
@@ -2305,7 +2328,7 @@ public partial class MainWindow : Window {
         if (settings.CustomPresets.Remove(presetName)) {
             settings.Save();
             PopulateCustomPresets(resetSelection: true);
-            Log($"🗑️ Пресет '{presetName}' удалён.");
+            Log(L.Format("s_2b7bf7166ebc", presetName));
         }
     }
 
@@ -2329,13 +2352,13 @@ public partial class MainWindow : Window {
 
     private void OptimizeObs() {
         MessageBox.Show(
-            "В OBS добавьте источник «Устройство захвата видео» и выберите OBS Virtual Camera.\n" +
-            "В H3H Cam включите виртуальную камеру. Собственный виртуальный выход OBS оставьте выключенным.\n\n" +
-            "Для Spout2: установите соответствующий плагин OBS, включите Spout2 в H3H Cam и выберите отправитель H3HCam.\n\n" +
-            "Альтернативный выход MPEG-TS: включите его в H3H Cam и добавьте источник медиа с адресом\n" +
+            L.Get("s_86c549c04690") +
+            L.Get("s_e69c60c61ad5") +
+            L.Get("s_7958044bfbab") +
+            L.Get("s_25cc81e02e48") +
             $"udp://127.0.0.1:{settings.ObsPort}?fifo_size=4096&overrun_nonfatal=1\n\n" +
-            "Сцены и профили OBS остаются под вашим управлением.",
-            "Подключение к OBS", MessageBoxButton.OK, MessageBoxImage.Information);
+            L.Get("s_a6a4bb24151e"),
+            L.Get("s_3c4aa27da29e"), MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void ApplyControls() {
@@ -2351,7 +2374,7 @@ public partial class MainWindow : Window {
         LockAeAwb.IsChecked = !(LockAeAwb.IsChecked == true);
         var locked = LockAeAwb.IsChecked == true;
         UpdateLockAeAwbUI(locked);
-        Log(locked ? "🔒 Экспозиция и баланс белого (AE/AWB) зафиксированы" : "🔓 Автоэкспозиция и баланс белого (AE/AWB) разблокированы");
+        Log(locked ? L.Get("s_d15097c0dc88") : L.Get("s_98504c092c56"));
         QueueSave();
     }
 
@@ -2435,7 +2458,7 @@ public partial class MainWindow : Window {
 
         _ = engine.TapFocus(sensorX, sensorY, CancellationToken.None);
         DrawFocusReticle(e.GetPosition(FocusCanvas));
-        Log($"🎯 Фокус по клику: экран ({dispX:P0}, {dispY:P0}) → сенсор ({sensorX:F2}, {sensorY:F2})");
+        Log(L.Format("s_6546db1c5d9e", dispX, dispY, sensorX, sensorY));
     }
 
     private void DrawFocusReticle(Point pt) {
@@ -2678,7 +2701,7 @@ public partial class MainWindow : Window {
 
     private void Ffplay_Click(object sender, RoutedEventArgs e) {
         if (engine?.Running == true) engine.LaunchExternalFfplay();
-        else Log("Запустите поток перед открытием ffplay.");
+        else Log(L.Get("s_fa44c07c53bb"));
     }
 
     private static void UpdateRunOnStartup(bool enabled) {
@@ -2701,7 +2724,7 @@ public partial class MainWindow : Window {
         if (!forceExit && settings.MinimizeToTray) {
             e.Cancel = true;
             Hide();
-            trayIcon?.ShowBalloon("H3H Cam", "Приложение свёрнуто в трей. Кликните дважды для открытия.");
+            trayIcon?.ShowBalloon("H3H Cam", L.Get("s_3996f3f5d141"));
             return;
         }
         e.Cancel = true;
@@ -2732,7 +2755,7 @@ public partial class MainWindow : Window {
                 s.Save();
             }
             if (engine != null) await engine.DisposeAsync();
-        } catch (Exception ex) { Log("Закрытие: " + ex.Message); }
+        } catch (Exception ex) { Log(L.Get("s_eafe0608cdef") + ex.Message); }
         finally {
             logTimer.Stop();
             closed = true;

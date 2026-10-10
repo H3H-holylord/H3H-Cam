@@ -34,9 +34,9 @@
                     <Ellipse x:Name="LiveDot" Width="8" Height="8" Fill="#00ff66" Margin="0,0,6,0"/>
                     <TextBlock Text="H3H CAM HUD" FontSize="11" FontWeight="Bold" Foreground="#00d2ff" VerticalAlignment="Center"/>
                 </StackPanel>
-                <Button Grid.Column="1" Content="◐" ToolTip="Прозрачность" Click="ToggleOpacity_Click"
+                <Button Grid.Column="1" Content="◐" ToolTip="{DynamicResource s_94a43d8b2012}" Click="ToggleOpacity_Click"
                         Background="Transparent" Foreground="#8892b0" BorderThickness="0" Cursor="Hand" Padding="4,0" Margin="0,0,4,0"/>
-                <Button Grid.Column="2" Content="✕" ToolTip="Закрыть HUD" Click="CloseHud_Click"
+                <Button Grid.Column="2" Content="✕" ToolTip="{DynamicResource s_7f9004dedf29}" Click="CloseHud_Click"
                         Background="Transparent" Foreground="#ff5370" BorderThickness="0" Cursor="Hand" Padding="4,0"/>
             </Grid>
 
@@ -54,7 +54,7 @@
                 </Border>
                 <Border Grid.Column="1" Background="#14213d" CornerRadius="6" Padding="8,5" Margin="3,0,0,0">
                     <StackPanel>
-                        <TextBlock Text="БИТРЕЙТ" Style="{StaticResource MetricLabel}"/>
+                        <TextBlock Text="{DynamicResource s_8891d54243e3}" Style="{StaticResource MetricLabel}"/>
                         <TextBlock x:Name="HudBitrate" Text="0.0 Mbps" FontSize="15" FontWeight="Bold" Foreground="#39ff14" VerticalAlignment="Bottom" Margin="0,2,0,0"/>
                     </StackPanel>
                 </Border>
@@ -67,11 +67,11 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Margin="0,0,4,0">
-                    <TextBlock Text="RTP JITTER" ToolTip="Колебание времени доставки RTP. Не измеряет полную задержку камера–экран." Style="{StaticResource MetricLabel}"/>
+                    <TextBlock Text="RTP JITTER" ToolTip="{DynamicResource s_8ecf8b6129cb}" Style="{StaticResource MetricLabel}"/>
                     <TextBlock x:Name="HudLatency" Text="—" Style="{StaticResource MetricValue}" Foreground="#ffb700"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Margin="4,0,0,0">
-                    <TextBlock Text="ТЕМП / БАТАРЕЯ" Style="{StaticResource MetricLabel}"/>
+                    <TextBlock Text="{DynamicResource s_abeca0654ebc}" Style="{StaticResource MetricLabel}"/>
                     <TextBlock x:Name="HudPhone" Text="—" Style="{StaticResource MetricValue}"/>
                 </StackPanel>
             </Grid>

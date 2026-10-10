@@ -23,7 +23,7 @@ public sealed class VirtualCameraWriter : IDisposable {
     public static Task<bool> InstallDriverAsync() => VirtualCameraDriver.InstallAsync();
 
     public VirtualCameraWriter(int width, int height, int fps) {
-        if (!VirtualCameraDriver.EnsureInstalled()) throw new IOException("Не удалось зарегистрировать виртуальную камеру");
+        if (!VirtualCameraDriver.EnsureInstalled()) throw new IOException(L.Get("s_023b8f2d01a3"));
         if (width % 2 != 0 || height % 2 != 0 || width < 2 || height < 2 || fps < 1)
             throw new ArgumentException("NV12 needs even dimensions and positive FPS");
         frameBytes = checked(width * height * 3 / 2);
@@ -32,7 +32,7 @@ public sealed class VirtualCameraWriter : IDisposable {
             mapping = MemoryMappedFile.CreateOrOpen("OBSVirtualCamVideo", 96L + 3L * stride,
                 MemoryMappedFileAccess.ReadWrite);
         } catch (Exception ex) {
-            throw new IOException("Не удалось открыть память OBS Virtual Camera: " + ex.Message, ex);
+            throw new IOException(L.Get("s_9e688fa0ee73") + ex.Message, ex);
         }
         try {
             view = mapping.CreateViewAccessor();

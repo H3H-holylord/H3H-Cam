@@ -4,7 +4,7 @@ public static class ToolPaths {
     public static string Find(string name, string configured = "") {
         if (!string.IsNullOrWhiteSpace(configured)) {
             if (File.Exists(configured)) return Path.GetFullPath(configured);
-            throw new FileNotFoundException($"Файл не найден: {configured}");
+            throw new FileNotFoundException(L.Format("s_b7b8baec8c23", configured));
         }
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var roots = new List<string> { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "tools"),
@@ -22,7 +22,7 @@ public static class ToolPaths {
                 if (match != null) return match;
             }
         }
-        throw new FileNotFoundException($"Не найден {name}. Укажите путь в разделе «Инструменты».");
+        throw new FileNotFoundException(L.Format("s_3fb61caf86e3", name));
     }
 }
 

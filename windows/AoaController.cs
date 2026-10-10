@@ -23,7 +23,7 @@ public sealed class AoaController : IDisposable {
     public async Task<AoaProbeResult> ConnectAsync(CancellationToken ct, bool allowSwitch = true) {
         ct.ThrowIfCancellationRequested();
         if (!NativeLibrary.TryLoad("libusb-1.0.dll", out var native))
-            return new(false, false, "USB Direct недоступен: не удалось загрузить libusb-1.0.dll. Распакуйте Windows ZIP целиком или используйте USB · ADB.");
+            return new(false, false, L.Get("s_1f1a0011b99a"));
         NativeLibrary.Free(native);
         try {
             if (context == null) {
@@ -32,14 +32,14 @@ public sealed class AoaController : IDisposable {
             }
         }
         catch (Exception ex) {
-            return new(false, false, "Не удалось запустить USB Direct: " + ex.Message);
+            return new(false, false, L.Get("s_0c61bc930a2b") + ex.Message);
         }
         // Find returns an owned clone and disposes the enumeration while its native
         // context is alive. Letting enumerated devices reach GC after libusb_exit
         // causes an uncatchable AccessViolation in libusb_unref_device.
         var current = context.Find(IsAccessory);
         if (current == null) {
-            if (!allowSwitch) return new(false, false, "Активный USB Direct не обнаружен; проверяем ADB и Wi-Fi.");
+            if (!allowSwitch) return new(false, false, L.Get("s_02c6e34daac7"));
             var switched = false;
             using (var candidates=context.List()) {
                 foreach (var candidate in candidates) {
@@ -49,13 +49,13 @@ public sealed class AoaController : IDisposable {
                 }
             }
             if (!switched)
-                return new(false, false, "Телефон найден Windows, но USB-интерфейс недоступен приложению. Для USB Direct нужен драйвер WinUSB для интерфейса H3H Cam (назначается через Zadig или диспетчер устройств); ADB-режим продолжает работать без изменения драйверов.");
+                return new(false, false, L.Get("s_b4d1d6d4472d"));
             for (var i = 0; i < 30 && current == null; i++) {
                 await Task.Delay(200, ct);
                 current = context.Find(IsAccessory);
             }
         }
-        if (current == null) return new(false, false, "Телефон не перешёл в Android Accessory mode");
+        if (current == null) return new(false, false, L.Get("s_bbfd73bcd331"));
         bool connected=false;
         try {
             current.Open();
@@ -65,13 +65,13 @@ public sealed class AoaController : IDisposable {
             readerStream = new UsbReaderStream(reader);
             device = current;
             connected=true;
-            return new(true, true, "USB Direct подключён", current.VendorId, current.ProductId);
+            return new(true, true, L.Get("s_96719d5d11f9"), current.VendorId, current.ProductId);
         } catch (Exception ex) {
             reader=null;
             writer=null;
             readerStream?.Dispose();readerStream=null;
             current.Close();
-            return new(false, true, "Accessory mode виден, но WinUSB не открыл интерфейс: " + ex.Message,
+            return new(false, true, L.Get("s_068401dded37") + ex.Message,
                 current.VendorId, current.ProductId);
         } finally {if(!connected)current.Dispose();}
     }

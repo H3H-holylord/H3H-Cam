@@ -2,12 +2,15 @@
 
 # Камера телефона для Windows и OBS
 
+**Русский** · [English](README.en.md)
+
 **H3H Cam** превращает Android-телефон в управляемую камеру для стримов, видеозвонков и записи. Windows-клиент выбирает модуль камеры и параметры потока; телефон захватывает и аппаратно кодирует видео.
 
-[**Скачать полный Portable**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.11/H3H-Cam-4.0.11-Portable.zip) · [Быстрый старт](docs/QUICKSTART.md) · [Сборка](docs/BUILD.md) · [Сообщить о проблеме](https://github.com/H3H-holylord/H3H-Cam/issues)
+[**Скачать полный Portable**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.12/H3H-Cam-4.0.12-Portable.zip) · [Быстрый старт](docs/QUICKSTART.md) · [Сборка](docs/BUILD.md) · [Сообщить о проблеме](https://github.com/H3H-holylord/H3H-Cam/issues)
 
 ## Возможности
 
+- Русский и английский интерфейс с переключателем языка на ПК и телефоне; выбор сохраняется и не перезапускает поток.
 - H.264 / HEVC, разрешение, 30/60 FPS и битрейт. 1080p60 проверен на Samsung Note9; режимы зависят от камеры и прошивки.
 - 2560×1440 (QHD/«2K»): прямой захват либо уменьшение доступного большего режима на GPU телефона. Источник и доступные FPS видны в клиенте: [поддержка 4.0.11](docs/QHD-4.0.11.md).
 - USB через ADB reverse; Wi-Fi через RTP/UDP; USB Direct/AOA при совместимом устройстве и драйвере WinUSB.
@@ -24,9 +27,9 @@
 
 | Файл | Назначение |
 |---|---|
-| [Полный Portable — рекомендуется](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.11/H3H-Cam-4.0.11-Portable.zip) | Windows 4.0.11, .NET, FFmpeg/FFplay, ADB с DLL, виртуальная камера, APK и AI-модель |
-| [Android APK](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.11/H3H-Cam-4.0.5.apk) | Android 4.0.5, Android 8+; обновить для нового GPU-режима QHD |
-| [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.11/SHA256SUMS.txt) | Проверка скачанных файлов |
+| [Полный Portable — рекомендуется](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.12/H3H-Cam-4.0.12-Portable.zip) | Windows 4.0.12, .NET, FFmpeg/FFplay, ADB с DLL, виртуальная камера, APK и AI-модель |
+| [Android APK](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.12/H3H-Cam-4.0.6.apk) | Android 4.0.6, Android 8+; обновить для переключателя языка |
+| [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.12/SHA256SUMS.txt) | Проверка скачанных файлов |
 
 **Новым пользователям: скачайте полный Portable и распакуйте его целиком.** Никаких отдельных установок .NET, FFmpeg, FFplay или ADB и настройки PATH не требуется. Утилиты лежат в `tools`, модель для AI-эффектов — в `models`, APK — рядом с EXE. Пути к инструментам в клиенте оставьте пустыми. Полная OBS для виртуальной камеры и видеозвонков не требуется.
 

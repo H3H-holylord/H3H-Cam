@@ -6,9 +6,9 @@ public static class Processes {
     public static void PrioritizeVideo(Process process, Action<string>? log = null) {
         try {
             process.PriorityClass = ProcessPriorityClass.AboveNormal;
-            log?.Invoke("Приоритет видео: Выше обычного · " + process.ProcessName);
+            log?.Invoke(L.Get("s_7555bcb7f2da") + process.ProcessName);
         } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) {
-            log?.Invoke("Не удалось повысить приоритет видео: " + ex.Message);
+            log?.Invoke(L.Get("s_deffd1b4b95f") + ex.Message);
         }
     }
 
@@ -20,7 +20,7 @@ public static class Processes {
         foreach (var a in args) info.ArgumentList.Add(a);
         var p = new Process { StartInfo = info, EnableRaisingEvents = true };
         p.ErrorDataReceived += (_, e) => { if (e.Data is { } line) log?.Invoke(line); };
-        if (!p.Start()) throw new InvalidOperationException($"Не запустился {file}");
+        if (!p.Start()) throw new InvalidOperationException(L.Format("s_9191b7180486", file));
         if (videoPriority) PrioritizeVideo(p, log);
         p.BeginErrorReadLine();
         return p;
@@ -33,13 +33,13 @@ public static class Processes {
         limit.CancelAfter(timeout);
         try { await p.WaitForExitAsync(limit.Token); }
         catch (OperationCanceledException) when (!token.IsCancellationRequested) {
-            Kill(p); throw new TimeoutException("ADB/процесс не ответил вовремя. Проверьте соединение и экран телефона.");
+            Kill(p); throw new TimeoutException(L.Get("s_0e2b79b96d80"));
         }
         catch { Kill(p); throw; }
         var result = await output;
         // Android 10 ActivityManager returns -1 (255 via adb) for a successful stop.
         var androidStopped = p.ExitCode == 255 && args.Contains("stopservice") && (result + errors).Contains("Service stopped");
-        if (p.ExitCode != 0 && !androidStopped) throw new IOException($"Процесс завершился с кодом {p.ExitCode}: {result.Trim()} {errors}");
+        if (p.ExitCode != 0 && !androidStopped) throw new IOException(L.Format("s_c62cb1c4a5e3", p.ExitCode, result.Trim(), errors));
         return result.Trim();
     }
     public static void Kill(Process? p) {

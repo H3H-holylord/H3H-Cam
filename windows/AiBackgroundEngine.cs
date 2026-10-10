@@ -90,7 +90,7 @@ public sealed class AiBackgroundEngine : IDisposable {
             try {
                 options.AppendExecutionProvider_DML(0);
                 IsDirectMl = true;
-                DeviceDescription = "DirectML GPU (RTX 4070 Ti / D3D12)";
+                DeviceDescription = "DirectML GPU / D3D12";
             } catch (Exception ex) {
                 IsDirectMl = false;
                 DeviceDescription = "CPU Fallback (" + ex.Message + ")";

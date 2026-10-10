@@ -189,31 +189,31 @@ public sealed class TrayIcon : IDisposable {
             return item;
         }
 
-        menu.Items.Add(CreateItem("Открыть H3H Cam", onOpen, isBold: true, iconText: "🖥️"));
-        menu.Items.Add(CreateItem("Старт / Стоп поток", onToggleStream, iconText: "▶"));
+        menu.Items.Add(CreateItem(L.Get("s_3b2bf9e7acbe"), onOpen, isBold: true, iconText: "🖥️"));
+        menu.Items.Add(CreateItem(L.Get("s_b6892c770f04"), onToggleStream, iconText: "▶"));
         if (onSnapshot != null) {
-            menu.Items.Add(CreateItem("📸 Сделать 4K снимок", onSnapshot, iconText: "📸"));
+            menu.Items.Add(CreateItem(L.Get("s_c615c4dcb15b"), onSnapshot, iconText: "📸"));
         }
         if (onToggleRecord != null) {
-            menu.Items.Add(CreateItem("🔴 Запись (Старт / Стоп)", onToggleRecord, iconText: "🔴"));
+            menu.Items.Add(CreateItem(L.Get("s_17d4f3da4d5a"), onToggleRecord, iconText: "🔴"));
         }
         if (onToggleMute != null) {
-            menu.Items.Add(CreateItem("Шторка приватности (Mute)", onToggleMute, iconText: "🔒"));
+            menu.Items.Add(CreateItem(L.Get("s_6e5c4067d45e"), onToggleMute, iconText: "🔒"));
         }
         if (onToggleHud != null) {
-            menu.Items.Add(CreateItem("Stream HUD (Показать / Скрыть)", onToggleHud, iconText: "📊"));
+            menu.Items.Add(CreateItem(L.Get("s_0697cfc10f07"), onToggleHud, iconText: "📊"));
         }
         if (onApplyPreset != null) {
             var presetsMenu = new MenuItem {
-                Header = "🎛️ Пресеты качества",
+                Header = L.Get("s_27c866501c07"),
                 Foreground = new SolidColorBrush(Color.FromRgb(231, 240, 255)),
                 Padding = new Thickness(8, 6, 12, 6),
                 FontSize = 13
             };
-            presetsMenu.Items.Add(CreateItem("🎮 Стриминг (1080p60 Spout2)", () => onApplyPreset("streaming")));
-            presetsMenu.Items.Add(CreateItem("💼 Конференции (720p30 Bokeh)", () => onApplyPreset("conference")));
-            presetsMenu.Items.Add(CreateItem("🎬 Pro Качество (1440p30 Spout2)", () => onApplyPreset("pro")));
-            presetsMenu.Items.Add(CreateItem("🍃 Эко-режим (720p30 Saving)", () => onApplyPreset("eco")));
+            presetsMenu.Items.Add(CreateItem(L.Get("s_81972542b0e4"), () => onApplyPreset("streaming")));
+            presetsMenu.Items.Add(CreateItem(L.Get("s_661451c0f114"), () => onApplyPreset("conference")));
+            presetsMenu.Items.Add(CreateItem(L.Get("s_82d205c49029"), () => onApplyPreset("pro")));
+            presetsMenu.Items.Add(CreateItem(L.Get("s_fbd463595a6a"), () => onApplyPreset("eco")));
             menu.Items.Add(presetsMenu);
         }
         menu.Items.Add(new Separator {
@@ -221,7 +221,7 @@ public sealed class TrayIcon : IDisposable {
             Height = 1,
             Margin = new Thickness(4, 3, 4, 3)
         });
-        menu.Items.Add(CreateItem("Выход", onExit, iconText: "✕", textColor: Color.FromRgb(255, 128, 128)));
+        menu.Items.Add(CreateItem(L.Get("s_75cd24c315d4"), onExit, iconText: "✕", textColor: Color.FromRgb(255, 128, 128)));
 
         menu.IsOpen = true;
     }

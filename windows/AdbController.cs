@@ -29,7 +29,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
 
     public Task<string> Command(CancellationToken ct, params string[] args) {
         if (string.IsNullOrWhiteSpace(Serial))
-            throw new InvalidOperationException("ADB-устройство ещё не выбрано");
+            throw new InvalidOperationException(L.Get("s_c896ce04b1e5"));
         return Processes.Run(Adb, new[] { "-s", Serial }.Concat(args), ct);
     }
 
@@ -49,7 +49,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
     }
 
     public async Task<bool> TryReconnectUsb(CancellationToken ct, int maxRetries = 12, int delayMs = 1000) {
-        log("USB Auto-Reconnect: поиск переподключенного устройства...");
+        log(L.Get("s_a4cc7881635b"));
         for (var attempt = 1; attempt <= maxRetries; attempt++) {
             if (ct.IsCancellationRequested) return false;
             try {
@@ -74,7 +74,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
                     Select(candidate, "usb");
                     var state = await Command(ct, "get-state");
                     if (state.Equals("device", StringComparison.OrdinalIgnoreCase)) {
-                        log($"USB Auto-Reconnect: устройство восстановлено · {candidate.Display} (попытка {attempt})");
+                        log(L.Format("s_87ab106c548f", candidate.Display, attempt));
                         return true;
                     }
                 }
@@ -83,14 +83,14 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             }
             await Task.Delay(delayMs, ct);
         }
-        log("USB Auto-Reconnect: устройство не найдено за отведённое время");
+        log(L.Get("s_43d737264fe6"));
         return false;
     }
 
     public async Task Connect(CancellationToken ct) {
         await RefreshDevices(ct);
         if (PhysicalUsb().Any(d => d.State.Equals("offline", StringComparison.OrdinalIgnoreCase))) {
-            log("ADB: попытка восстановить offline USB-устройство");
+            log(L.Get("s_74045875dd62"));
             try { await HostCommand(ct, "reconnect", "offline"); }
             catch (Exception ex) when (ex is IOException or TimeoutException) { log("ADB reconnect: " + ex.Message); }
             for (var attempt = 0; attempt < 4; attempt++) {
@@ -114,7 +114,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
                 await SelectAuto(ct);
                 break;
             default:
-                throw new ArgumentException("Неизвестный транспорт: " + settings.Transport);
+                throw new ArgumentException(L.Get("s_fb1b82c91011") + settings.Transport);
         }
 
         var state = await Command(ct, "get-state");
@@ -123,7 +123,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
 
         var package = await Command(ct, "shell", "pm", "path", PackageName);
         if (!package.Contains("package:", StringComparison.Ordinal))
-            throw new InvalidOperationException("На выбранном телефоне не установлен H3HCam APK");
+            throw new InvalidOperationException(L.Get("s_b37891ec3bfe"));
 
         var model = await Command(ct, "shell", "getprop", "ro.product.model");
         if (!string.IsNullOrWhiteSpace(model) && Device is { } selected) {
@@ -159,12 +159,12 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
         }
         if (authorizedUsb.Length > 1) {
             if (preferred is { IsNetwork: true, Authorized: true }) {
-                log("AUTO: подключено несколько USB-телефонов; используется явно выбранный Wi-Fi ADB");
+                log(L.Get("s_c1f80186c64f"));
                 Select(preferred, "wifi");
                 return;
             }
-            throw new InvalidOperationException("Подключено несколько USB-телефонов: " + DeviceList(authorizedUsb) +
-                ". Выберите телефон в списке устройств.");
+            throw new InvalidOperationException(L.Get("s_6e7e5570a8a6") + DeviceList(authorizedUsb) +
+                L.Get("s_ac5215b91128"));
         }
 
         if (preferred is { IsNetwork: true }) {
@@ -197,14 +197,14 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
         var authorized = usb.Where(d => d.Authorized).ToArray();
         if (authorized.Length == 1) return authorized[0];
         if (authorized.Length > 1)
-            throw new InvalidOperationException("Подключено несколько USB-телефонов: " + DeviceList(authorized) +
-                ". Выберите нужный телефон.");
+            throw new InvalidOperationException(L.Get("s_6e7e5570a8a6") + DeviceList(authorized) +
+                L.Get("s_0a207558c32e"));
         if (usb.Length > 0) throw StateError(usb[0]);
 
         var network = devices.Where(d => d.IsNetwork && d.Authorized).ToArray();
         if (network.Length > 0)
-            throw new InvalidOperationException("Телефон виден только через Wi-Fi ADB (" + DeviceList(network) +
-                "), но выбран режим USB. Проверьте кабель с передачей данных и USB debugging.");
+            throw new InvalidOperationException(L.Get("s_7ca1b140082d") + DeviceList(network) +
+                L.Get("s_5684ad338370"));
         throw NoDeviceError();
     }
 
@@ -245,8 +245,8 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             return authorizedNetwork[0];
         }
         if (authorizedNetwork.Length > 1)
-            throw new InvalidOperationException("Доступно несколько телефонов по Wi-Fi ADB: " +
-                DeviceList(authorizedNetwork) + ". Выберите нужный телефон.");
+            throw new InvalidOperationException(L.Get("s_734199c9c8b9") +
+                DeviceList(authorizedNetwork) + L.Get("s_0a207558c32e"));
 
         if (allowLegacyUsb) {
             var usb = TryPickUsbForWifi();
@@ -256,8 +256,8 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
         var blockedNetwork = devices.FirstOrDefault(d => d.IsNetwork && !d.Authorized);
         if (blockedNetwork != null) throw StateError(blockedNetwork);
         if (connectProblem.Length > 0)
-            throw new InvalidOperationException("Не удалось подключить Wi-Fi ADB: " + connectProblem);
-        throw new InvalidOperationException("Wi-Fi ADB не найден. Укажите актуальный IP:порт либо подключите телефон кабелем для включения legacy ADB на порту 5555.");
+            throw new InvalidOperationException(L.Get("s_c4967d0c5c24") + connectProblem);
+        throw new InvalidOperationException(L.Get("s_182079663758"));
     }
 
     private AdbDevice? TryPickUsbForWifi() {
@@ -271,8 +271,8 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
         var authorized = usb.Where(d => d.Authorized).ToArray();
         if (authorized.Length == 1) return authorized[0];
         if (authorized.Length > 1)
-            throw new InvalidOperationException("Для включения Wi-Fi ADB подключено несколько телефонов: " +
-                DeviceList(authorized) + ". Выберите нужный телефон.");
+            throw new InvalidOperationException(L.Get("s_8da98eeacf66") +
+                DeviceList(authorized) + L.Get("s_0a207558c32e"));
         if (usb.Length > 0) throw StateError(usb[0]);
         return null;
     }
@@ -280,7 +280,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
     private async Task<AdbDevice> EnableLegacyWifi(AdbDevice usb, CancellationToken ct) {
         Select(usb, "usb");
         var ip = await FindWifiIpv4(ct);
-        log($"Wi-Fi ADB: включение {ip}:5555 через USB · {usb.Serial}");
+        log(L.Format("s_2bb018edfbf4", ip, usb.Serial));
         await Command(ct, "tcpip", "5555");
 
         var endpoint = ip + ":5555";
@@ -302,8 +302,8 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
                 last = ex.Message;
             }
         }
-        throw new IOException("ADB переключился в TCP-режим, но подключение " + endpoint +
-            " не установилось. Проверьте, что телефон и компьютер находятся в одной сети. " + last);
+        throw new IOException(L.Get("s_2e5a36cccd95") + endpoint +
+            L.Get("s_912b806f9421") + last);
     }
 
     private async Task<string> FindWifiIpv4(CancellationToken ct) {
@@ -322,7 +322,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
                 // Older vendor builds expose only one of the two `ip` command forms.
             }
         }
-        throw new InvalidOperationException("Телефон подключён по USB, но активный IPv4 Wi-Fi не найден");
+        throw new InvalidOperationException(L.Get("s_c91215e38daf"));
     }
 
     public static string FindLocalIpv4() {
@@ -340,14 +340,14 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
         if (!settings.AutoPcIp && Settings.Ipv4(settings.PcIp)) return;
         var host = Settings.EndpointHost(settings.PhoneIp);
         if (!Settings.Ipv4(host))
-            throw new InvalidOperationException("Для автоматического выбора сети нужен IPv4 телефона");
+            throw new InvalidOperationException(L.Get("s_895876b5a1cb"));
         using var route = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         route.Connect(host, settings.RtpPort);
         var local = ((IPEndPoint)route.LocalEndPoint!).Address;
         if (local.Equals(IPAddress.Any) || IPAddress.IsLoopback(local))
-            throw new InvalidOperationException("Не найден сетевой интерфейс компьютера до телефона " + host);
+            throw new InvalidOperationException(L.Get("s_7770790f8748") + host);
         settings.PcIp = local.ToString();
-        log("Сетевой интерфейс компьютера · " + settings.PcIp);
+        log(L.Get("s_3cca31805023") + settings.PcIp);
     }
 
     private void Select(AdbDevice device, string transport) {
@@ -370,27 +370,27 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
         !d.IsNetwork && !d.Serial.StartsWith("emulator-", StringComparison.OrdinalIgnoreCase));
 
     public async Task<PhoneCapabilities> GetCapabilities(CancellationToken ct) {
-        if (Device == null) throw new InvalidOperationException("Сначала подключите телефон");
+        if (Device == null) throw new InvalidOperationException(L.Get("s_abc00512d845"));
         var result = await Command(ct, "shell", "content", "call", "--uri", CapabilitiesUri,
             "--method", "capabilities");
         var error = ParseBundleValue(result, "error");
         if (!string.IsNullOrWhiteSpace(error))
-            throw new InvalidDataException("Телефон не вернул каталог камер: " + error);
+            throw new InvalidDataException(L.Get("s_a688c90dd313") + error);
         var encoded = ParseBundleValue(result, "data");
         if (string.IsNullOrWhiteSpace(encoded))
-            throw new InvalidDataException("H3H Cam APK не поддерживает получение каталога камер или вернул пустой ответ");
+            throw new InvalidDataException(L.Get("s_11a9a09a36ed"));
         try {
             var capabilities = PhoneCapabilities.ParseBase64(encoded);
-            log($"Камеры телефона · {capabilities.Cameras.Count} · {capabilities.Manufacturer} {capabilities.Model}");
+            log(L.Format("s_fa738b76973c", capabilities.Cameras.Count, capabilities.Manufacturer, capabilities.Model));
             return capabilities;
         } catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException) {
-            throw new InvalidDataException("Телефон вернул повреждённый каталог камер", ex);
+            throw new InvalidDataException(L.Get("s_2ac90a6852c2"), ex);
         }
     }
 
     public async Task Reverse(CancellationToken ct) {
         if (EffectiveTransport != "usb")
-            throw new InvalidOperationException("ADB reverse используется только для USB-транспорта");
+            throw new InvalidOperationException(L.Get("s_d68be15abd68"));
         var remote = $"tcp:{settings.UsbPort}";
         var local = $"tcp:{settings.UsbPort}";
         var mappings = ParseReverseMappings(await Command(ct, "reverse", "--list"));
@@ -399,19 +399,19 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             (m.Serial.Length == 0 || m.Serial.Equals(Serial, StringComparison.OrdinalIgnoreCase)));
         if (existing != null) {
             if (!existing.Local.Equals(local, StringComparison.OrdinalIgnoreCase))
-                throw new IOException($"Порт телефона {remote} уже связан с {existing.Local}");
-            log("ADB reverse уже настроен · " + remote);
+                throw new IOException(L.Format("s_85e7601efa0c", remote, existing.Local));
+            log(L.Get("s_cfe45c4ff17f") + remote);
             return;
         }
         await Command(ct, "reverse", remote, local);
         ownReverse = true;
         reverseSerial = Serial;
-        log($"ADB reverse · телефон {remote} → компьютер {local}");
+        log(L.Format("s_e8428438880b", remote, local));
     }
 
     public async Task StartStream(CancellationToken ct) {
         if (Device == null || EffectiveTransport is not ("usb" or "wifi"))
-            throw new InvalidOperationException("Сначала подключите телефон");
+            throw new InvalidOperationException(L.Get("s_abc00512d845"));
 
         SessionId = Guid.NewGuid().ToString("N");
         await Command(ct, "shell", "input", "keyevent", "224");
@@ -456,7 +456,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             throw new IOException(result);
 
         await ConfirmStreamService(ct);
-        log("Android StreamService подтверждён · session " + SessionId[..8]);
+        log(L.Get("s_b389649d3de8") + SessionId[..8]);
     }
 
     public async Task UpdateControls(Settings nextSettings, CancellationToken ct) {
@@ -523,10 +523,10 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             lastBatteryProtectState = protect;
 
             log(protect
-                ? "Защита батареи: отправлен запрос Samsung protect_battery=1. Фактический лимит зависит от прошивки и не подтверждён приложением."
-                : "Защита батареи: лимит отключен (зарядка до 100%, protect_battery = 0)");
+                ? L.Get("s_a04afb5f2922")
+                : L.Get("s_117b8d05aa21"));
         } catch (Exception ex) {
-            log("Управление батареей: " + ex.Message);
+            log(L.Get("s_d45c9f47cd55") + ex.Message);
         }
     }
 
@@ -545,8 +545,8 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             last = await Command(ct, "shell", "dumpsys", "activity", "services", PackageName);
             if (ServiceIsRunning(last)) return;
         }
-        throw new InvalidOperationException("Android открыл H3H Cam, но StreamService не запустился. " +
-            "Разблокируйте телефон, разрешите доступ к камере и повторите START." +
+        throw new InvalidOperationException(L.Get("s_e2769dfc9525") +
+            L.Get("s_3daa47244d22") +
             (last.Contains("Permission", StringComparison.OrdinalIgnoreCase) ? " " + last.Trim() : ""));
     }
 
@@ -557,7 +557,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             await Command(ct, "shell", "dumpsys", "battery", "reset");
             lastBatteryProtectState = null;
         } catch (Exception ex) {
-            log("Сброс батареи при остановке: " + ex.Message);
+            log(L.Get("s_3551b1ca131a") + ex.Message);
         }
         if (SessionId.Length > 0) {
             try {
@@ -586,20 +586,20 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
     private static InvalidOperationException StateError(AdbDevice device) {
         var location = device.IsNetwork ? "Wi-Fi ADB" : "USB";
         var message = device.State.ToLowerInvariant() switch {
-            "unauthorized" => $"Телефон {device.Serial} найден через {location}, но не авторизован. Разблокируйте его, подтвердите ключ «Разрешить отладку по USB» и нажмите TEST CONNECTION ещё раз.",
-            "offline" => $"Телефон {device.Serial} найден через {location}, но ADB показывает offline. Переподключите кабель или Wi-Fi ADB и повторите проверку.",
-            "authorizing" => $"Телефон {device.Serial} ожидает подтверждения ADB. Разблокируйте телефон и разрешите отладку.",
-            "no permissions" => $"Телефон {device.Serial} найден, но ADB не получил доступ. Проверьте драйвер ADB и разрешение отладки.",
-            "recovery" or "sideload" => $"Телефон {device.Serial} находится в режиме {device.State}. Загрузите Android для работы камеры.",
-            _ => $"Телефон {device.Serial} найден через {location}, состояние ADB: {device.State}."
+            "unauthorized" => L.Format("s_a943b4530752", device.Serial, location),
+            "offline" => L.Format("s_dbd0fcc879f9", device.Serial, location),
+            "authorizing" => L.Format("s_fe9443b913e2", device.Serial),
+            "no permissions" => L.Format("s_9eb9d8a9bd67", device.Serial),
+            "recovery" or "sideload" => L.Format("s_d1a162267662", device.Serial, device.State),
+            _ => L.Format("s_df6b3e7002ad", device.Serial, location, device.State)
         };
         return new InvalidOperationException(message);
     }
 
     private InvalidOperationException NoDeviceError() {
         if (devices.Any(d => d.Serial.StartsWith("emulator-", StringComparison.OrdinalIgnoreCase)))
-            return new InvalidOperationException("ADB видит только эмулятор. Подключите телефон кабелем с передачей данных и включите USB debugging.");
-        return new InvalidOperationException("ADB не видит телефон. Нужен кабель с передачей данных, включённая USB debugging и рабочий драйвер ADB. После подключения разблокируйте телефон и подтвердите ключ компьютера.");
+            return new InvalidOperationException(L.Get("s_ab6a739fa5c4"));
+        return new InvalidOperationException(L.Get("s_f81d7171fa17"));
     }
 
     private static string DeviceList(IEnumerable<AdbDevice> source) => string.Join(", ",

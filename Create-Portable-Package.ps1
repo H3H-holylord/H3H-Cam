@@ -19,7 +19,7 @@ function Assert-Dependency([string]$Path, [string]$Hash) {
     }
 }
 
-Write-Host "=== Создание автономного Portable-пакета H3H Cam 4.0.11 ===" -ForegroundColor Cyan
+Write-Host "=== Создание автономного Portable-пакета H3H Cam 4.0.12 ===" -ForegroundColor Cyan
 
 function Get-AndroidTool([string]$ToolName) {
     $sdk = $env:ANDROID_HOME
@@ -41,8 +41,8 @@ function Test-ApkIsRelease([string]$ApkPath) {
         $badgingStr = $badging -join "`n"
         if ($badgingStr -match "application-debuggable") { return $false }
         if (-not ($badgingStr -match "package:\s+name='com\.h3h\.s8cam'")) { return $false }
-        if (-not ($badgingStr -match "versionCode='18'")) { return $false }
-        if (-not ($badgingStr -match "versionName='4\.0\.5'")) { return $false }
+        if (-not ($badgingStr -match "versionCode='19'")) { return $false }
+        if (-not ($badgingStr -match "versionName='4\.0\.6'")) { return $false }
     }
     $apksigner = Get-AndroidTool 'apksigner.bat'
     if (-not $apksigner) { throw 'apksigner.bat is required to verify a release APK' }
@@ -74,11 +74,11 @@ function Assert-ReleaseApk([string]$ApkPath) {
         if (-not ($badgingStr -match "package:\s+name='com\.h3h\.s8cam'")) {
             throw "RELEASE GUARD FAILED: Package name must be com.h3h.s8cam"
         }
-        if (-not ($badgingStr -match "versionCode='18'")) {
-            throw "RELEASE GUARD FAILED: versionCode must be 18"
+        if (-not ($badgingStr -match "versionCode='19'")) {
+            throw "RELEASE GUARD FAILED: versionCode must be 19"
         }
-        if (-not ($badgingStr -match "versionName='4\.0\.5'")) {
-            throw "RELEASE GUARD FAILED: versionName must be 4.0.5"
+        if (-not ($badgingStr -match "versionName='4\.0\.6'")) {
+            throw "RELEASE GUARD FAILED: versionName must be 4.0.6"
         }
     }
 
@@ -105,15 +105,15 @@ function Assert-ReleaseApk([string]$ApkPath) {
 function Assert-ReleaseExe([string]$ExePath) {
     if (-not (Test-Path $ExePath)) { throw "Receiver EXE does not exist: $ExePath" }
     $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ExePath)
-    if ($info.FileVersion -ne '4.0.11.0') {
-        throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.11.0 (got: $($info.FileVersion))"
+    if ($info.FileVersion -ne '4.0.12.0') {
+        throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.12.0 (got: $($info.FileVersion))"
     }
     Write-Host "✅ Receiver Release Guard: $ExePath подтверждён (Version: $($info.FileVersion))." -ForegroundColor Green
 }
 
 # 1. Проверяем наличие и валидность бинарников Windows и Android
 $exePath = Join-Path $DistDir 'H3HCam Receiver.exe'
-$apkPath = Join-Path $DistDir 'H3H-Cam-4.0.5.apk'
+$apkPath = Join-Path $DistDir 'H3H-Cam-4.0.6.apk'
 
 if (-not (Test-Path $exePath)) {
     Write-Host "Сборка H3HCam Receiver.exe..." -ForegroundColor Yellow
@@ -125,7 +125,7 @@ Assert-ReleaseExe $exePath
 if (-not (Test-Path $apkPath) -or -not (Test-ApkIsRelease $apkPath)) {
     Write-Host "Сборка проверенного Android Release APK..." -ForegroundColor Yellow
     & (Join-Path $s8Root 'Build.ps1') -Target Android
-    if ($DistDir -ne (Join-Path $s8Root 'dist')) { Copy-Item -LiteralPath (Join-Path $s8Root 'dist\H3H-Cam-4.0.5.apk') -Destination $apkPath -Force }
+    if ($DistDir -ne (Join-Path $s8Root 'dist')) { Copy-Item -LiteralPath (Join-Path $s8Root 'dist\H3H-Cam-4.0.6.apk') -Destination $apkPath -Force }
 }
 Assert-ReleaseApk $apkPath
 
@@ -162,7 +162,7 @@ if (-not $ModelPath) { $ModelPath = Join-Path $s8Root 'windows\models\u2netp.onn
 Assert-Dependency $ModelPath $dependencyManifest.model.sha256
 
 # 3. Формируем папку пакета
-$portableDir = Join-Path $DistDir 'H3H-Cam-4.0.11-Portable'
+$portableDir = Join-Path $DistDir 'H3H-Cam-4.0.12-Portable'
 $portableDir = [IO.Path]::GetFullPath($portableDir)
 if ([IO.Path]::GetDirectoryName($portableDir) -ne $DistDir.TrimEnd('\')) {
     throw "Portable target must be a direct child of DistDir: $portableDir"
@@ -177,9 +177,9 @@ $toolsDir = Join-Path $portableDir 'tools'
 New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
 
 # Копируем основные файлы
-Write-Host "Копирование H3HCam Receiver.exe и H3H-Cam-4.0.5.apk..." -ForegroundColor Gray
+Write-Host "Копирование H3HCam Receiver.exe и H3H-Cam-4.0.6.apk..." -ForegroundColor Gray
 Copy-Item -LiteralPath $exePath -Destination (Join-Path $portableDir 'H3HCam Receiver.exe') -Force
-Copy-Item -LiteralPath $apkPath -Destination (Join-Path $portableDir 'H3H-Cam-4.0.5.apk') -Force
+Copy-Item -LiteralPath $apkPath -Destination (Join-Path $portableDir 'H3H-Cam-4.0.6.apk') -Force
 if (Test-Path (Join-Path $s8Root 'windows\app.ico')) {
     Copy-Item -LiteralPath (Join-Path $s8Root 'windows\app.ico') -Destination (Join-Path $portableDir 'app.ico') -Force
 }
@@ -201,7 +201,7 @@ if (Test-Path $readmeSrc) {
 
 Copy-Item -LiteralPath (Join-Path $s8Root 'docs') -Destination (Join-Path $portableDir 'docs') -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $s8Root 'Collect-Diagnostics.ps1') -Destination $portableDir -Force
-foreach ($name in @('LICENSE', 'THIRD_PARTY.md', 'README.md')) {
+foreach ($name in @('LICENSE', 'THIRD_PARTY.md', 'README.md', 'README.en.md')) {
     Copy-Item -LiteralPath (Join-Path $s8Root $name) -Destination $portableDir -Force
 }
 Copy-Item -LiteralPath (Join-Path $s8Root 'licenses') -Destination $portableDir -Recurse -Force
@@ -210,8 +210,11 @@ Copy-Item -LiteralPath (Join-Path $ffmpegRoot 'README.txt') -Destination (Join-P
 Copy-Item -LiteralPath (Join-Path $adbDir 'NOTICE.txt') -Destination (Join-Path $portableDir 'licenses\Android-Platform-Tools-NOTICE.txt') -Force
 Copy-Item -LiteralPath (Join-Path $adbDir 'source.properties') -Destination (Join-Path $portableDir 'licenses\Android-Platform-Tools-Version.txt') -Force
 Copy-Item -LiteralPath (Join-Path $s8Root 'packaging\portable-dependencies.json') -Destination (Join-Path $portableDir 'COMPONENTS.json') -Force
-$installerText = [IO.File]::ReadAllText((Join-Path $s8Root 'packaging\Установить на телефон.cmd')) -replace '\r?\n', "`r`n"
-[IO.File]::WriteAllText((Join-Path $portableDir 'Установить на телефон.cmd'), $installerText, [Text.UTF8Encoding]::new($false))
+Copy-Item -LiteralPath (Join-Path $s8Root 'packaging\PORTABLE-README.en.txt') -Destination (Join-Path $portableDir 'README-English.txt') -Force
+foreach ($installerName in @('Установить на телефон.cmd', 'Install-on-phone.cmd')) {
+    $installerText = [IO.File]::ReadAllText((Join-Path $s8Root ('packaging\' + $installerName))) -replace '\r?\n', "`r`n"
+    [IO.File]::WriteAllText((Join-Path $portableDir $installerName), $installerText, [Text.UTF8Encoding]::new($false))
+}
 # Копируем утилиты в tools/
 Write-Host "Копирование утилит в tools/..." -ForegroundColor Gray
 Copy-Item -LiteralPath $adbPath -Destination (Join-Path $toolsDir 'adb.exe') -Force
@@ -240,7 +243,7 @@ $hashLines = Get-ChildItem -LiteralPath $portableDir -File -Recurse | Sort-Objec
 
 # 4. Создаем ZIP-архив со стандартными разделителями '/'
 if (-not $NoZip) {
-    $zipPath = Join-Path $DistDir 'H3H-Cam-4.0.11-Portable.zip'
+    $zipPath = Join-Path $DistDir 'H3H-Cam-4.0.12-Portable.zip'
     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
     Write-Host "Сжатие в ZIP-архив: $zipPath ..." -ForegroundColor Yellow
 

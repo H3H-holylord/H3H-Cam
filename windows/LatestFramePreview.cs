@@ -53,7 +53,7 @@ public sealed class LatestFramePreview : IAsyncDisposable {
                     }
                 } catch(Exception ex) {
                     // Optional observers must not terminate a background thread/process.
-                    try {log("Предпросмотр: "+ex.Message);} catch { }
+                    try {log(L.Get("s_5001b2a00821")+ex.Message);} catch { }
                 }
                 finally {lock(gate) {processing=null;}}
             }

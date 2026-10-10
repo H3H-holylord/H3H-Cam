@@ -21,7 +21,7 @@ public sealed class ConnectionManager(Action<string> log) {
         Settings settings,
         CancellationToken ct) {
         
-        SetState(TransportState.Discovering, "Поиск лучшего подключения (USB Direct → ADB → Wi-Fi)...");
+        SetState(TransportState.Discovering, L.Get("s_ad9ed103cebb"));
 
         // 1. Попытка USB Direct (AOA)
         try {
@@ -31,7 +31,7 @@ public sealed class ConnectionManager(Action<string> log) {
             // AUTO must not switch a working USB/ADB device into accessory mode while probing.
             var directProbe = await direct.ConnectAsync(timeoutCts.Token, allowSwitch: false);
             if (directProbe.Ready) {
-                SetState(TransportState.Connecting, "Обнаружен USB Direct (AOA)");
+                SetState(TransportState.Connecting, L.Get("s_2e1a4f77b6a6"));
                 return "direct";
             }
         } catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -42,7 +42,7 @@ public sealed class ConnectionManager(Action<string> log) {
             await adb.RefreshDevices(ct);
             var physicalUsb = adb.Devices.FirstOrDefault(d => !d.IsNetwork && d.Authorized);
             if (physicalUsb != null) {
-                SetState(TransportState.Connecting, $"Обнаружен телефон по USB ADB: {physicalUsb.Display}");
+                SetState(TransportState.Connecting, L.Format("s_cf8462139883", physicalUsb.Display));
                 return "usb";
             }
         } catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -51,11 +51,11 @@ public sealed class ConnectionManager(Action<string> log) {
 
         // 3. Попытка Wi-Fi (если задан IP или обнаружен в LAN)
         if (!string.IsNullOrWhiteSpace(settings.PhoneIp) && settings.PhoneIp != "127.0.0.1") {
-            SetState(TransportState.Connecting, $"Используется локальная сеть Wi-Fi: {settings.PhoneIp}");
+            SetState(TransportState.Connecting, L.Format("s_19533ae8f2dc", settings.PhoneIp));
             return "wifi";
         }
 
-        SetState(TransportState.Failed, "Устройства не обнаружены ни по USB, ни по Wi-Fi");
+        SetState(TransportState.Failed, L.Get("s_3cc07466bff5"));
         return "usb"; // Fallback to USB ADB for descriptive error
     }
 
@@ -70,7 +70,7 @@ public sealed class ConnectionManager(Action<string> log) {
 
     public void OnRecovering(string transport, int attempt, int delayMs) {
         ReconnectAttempts = attempt;
-        SetState(TransportState.Recovering, $"Восстановление {transport} (попытка {attempt}, пауза {delayMs} мс)");
+        SetState(TransportState.Recovering, L.Format("s_9cc2167088fe", transport, attempt, delayMs));
     }
 
     public static int CalculateBackoffMs(int attempt, int minMs = 800, int maxMs = 8000) {

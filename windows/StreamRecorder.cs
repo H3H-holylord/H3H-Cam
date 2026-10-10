@@ -37,7 +37,7 @@ public sealed class StreamRecorder : IDisposable {
 
     public string Start(Settings settings, string sdpPath, string? customDirectory = null) {
         lock (lockObj) {
-            if (IsRecording) throw new InvalidOperationException("Локальная запись уже активна");
+            if (IsRecording) throw new InvalidOperationException(L.Get("s_d555b614be96"));
 
             var targetDir = customDirectory ?? RecordsDirectory;
             Directory.CreateDirectory(targetDir);
@@ -48,7 +48,7 @@ public sealed class StreamRecorder : IDisposable {
 
             var ffmpegPath = ToolPaths.Find("ffmpeg.exe", settings.FfmpegPath);
             if (!File.Exists(ffmpegPath))
-                throw new FileNotFoundException("Утилита FFmpeg не найдена для локальной записи", ffmpegPath);
+                throw new FileNotFoundException(L.Get("s_145816cdaeaf"), ffmpegPath);
 
             var args = new List<string> {
                 "-hide_banner", "-loglevel", "warning",
@@ -67,7 +67,7 @@ public sealed class StreamRecorder : IDisposable {
 
             ffmpegProcess = Processes.Start(ffmpegPath, args, line => log("Recorder · " + line), stdin: true, stdout: false);
             stopwatch.Restart();
-            log($"🔴 Запись MP4 без перекодирования: {fileName}");
+            log(L.Format("s_89a18f894601", fileName));
             return currentFilePath;
         }
     }
@@ -117,7 +117,7 @@ public sealed class StreamRecorder : IDisposable {
         } catch { }
 
         double mb = size / (1024.0 * 1024.0);
-        log($"⏹️ Запись {(interrupted ? "прервана; последний фрагмент может быть неполным" : "сохранена")}: {Path.GetFileName(path)} ({mb:F1} МБ, {duration:mm\\:ss})");
+        log(L.Format("s_0b02daaec05a", (interrupted ? L.Get("s_a2f86599a54b") : L.Get("s_14da4d45c2cb")), Path.GetFileName(path), mb, duration));
         return (path, duration, size);
     }
 

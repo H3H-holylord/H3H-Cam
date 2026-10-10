@@ -33,11 +33,11 @@ function Assert-ReleaseApk([string]$ApkPath) {
         if (-not ($badgingStr -match "package:\s+name='com\.h3h\.s8cam'")) {
             throw "RELEASE GUARD FAILED: Package name must be com.h3h.s8cam"
         }
-        if (-not ($badgingStr -match "versionCode='18'")) {
-            throw "RELEASE GUARD FAILED: versionCode must be 18"
+        if (-not ($badgingStr -match "versionCode='19'")) {
+            throw "RELEASE GUARD FAILED: versionCode must be 19"
         }
-        if (-not ($badgingStr -match "versionName='4\.0\.5'")) {
-            throw "RELEASE GUARD FAILED: versionName must be 4.0.5"
+        if (-not ($badgingStr -match "versionName='4\.0\.6'")) {
+            throw "RELEASE GUARD FAILED: versionName must be 4.0.6"
         }
     } else {
         Write-Warning "aapt.exe not found for deep badging inspection."
@@ -93,9 +93,9 @@ if ($Target -in @('All','Android')) {
 
     Assert-ReleaseApk $apkSource
 
-    Copy-Item -LiteralPath $apkSource -Destination (Join-Path $s8Dist 'H3H-Cam-4.0.5.apk') -Force
-    Copy-Item -LiteralPath (Join-Path $s8Dist 'H3H-Cam-4.0.5.apk') -Destination (Join-Path $s8Root 'H3H-Cam-4.0.5.apk') -Force
-    Write-Host "Android Release APK готов: $(Join-Path $s8Dist 'H3H-Cam-4.0.5.apk')" -ForegroundColor Green
+    Copy-Item -LiteralPath $apkSource -Destination (Join-Path $s8Dist 'H3H-Cam-4.0.6.apk') -Force
+    Copy-Item -LiteralPath (Join-Path $s8Dist 'H3H-Cam-4.0.6.apk') -Destination (Join-Path $s8Root 'H3H-Cam-4.0.6.apk') -Force
+    Write-Host "Android Release APK готов: $(Join-Path $s8Dist 'H3H-Cam-4.0.6.apk')" -ForegroundColor Green
 }
 if ($Target -in @('All','Test')) {
     Write-Host "Запуск тестов Windows..." -ForegroundColor Cyan
@@ -110,8 +110,8 @@ if ($Target -in @('All','Windows')) {
     $receiverExe = Join-Path $s8Dist 'H3HCam Receiver.exe'
     if (Test-Path $receiverExe) {
         $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($receiverExe)
-        if ($info.FileVersion -ne '4.0.11.0') {
-            throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.11.0 (got: $($info.FileVersion))"
+        if ($info.FileVersion -ne '4.0.12.0') {
+            throw "RELEASE GUARD FAILED: Receiver FileVersion must be 4.0.12.0 (got: $($info.FileVersion))"
         }
         Write-Host "✅ Receiver Release Guard: $receiverExe verified (Version: $($info.FileVersion))." -ForegroundColor Green
         try {

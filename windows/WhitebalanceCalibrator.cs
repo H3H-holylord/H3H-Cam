@@ -20,7 +20,7 @@ public static class WhitebalanceCalibrator {
 
     public static WbCalibrationResult CalibrateFromBgra(byte[] bgra, int width, int height, double centerRatio = 0.30) {
         if (bgra == null || bgra.Length < width * height * 4 || width <= 0 || height <= 0) {
-            return new WbCalibrationResult(false, 0, 0, 1f, 1f, 1f, 0, 0, 0, "Кадр недоступен для анализа.");
+            return new WbCalibrationResult(false, 0, 0, 1f, 1f, 1f, 0, 0, 0, L.Get("s_01fce0f64c4c"));
         }
 
         int boxW = Math.Max(10, (int)(width * centerRatio));
@@ -72,14 +72,14 @@ public static class WhitebalanceCalibrator {
         if (validCount < 100 || validCount < totalSampled * 0.10) {
             if (clippedCount > totalSampled * 0.40) {
                 return new WbCalibrationResult(false, 0, 0, 1f, 1f, 1f, 0, 0, 0,
-                    "⚠️ Пересвет в центре кадра. Отойдите от прямого блика лампы и поднесите лист бумаги ровно.");
+                    L.Get("s_94bca2f452f9"));
             }
             if (darkCount > totalSampled * 0.50) {
                 return new WbCalibrationResult(false, 0, 0, 1f, 1f, 1f, 0, 0, 0,
-                    "⚠️ Слишком темно. Направьте свет на лист бумаги в центре кадра.");
+                    L.Get("s_0254c5dceaba"));
             }
             return new WbCalibrationResult(false, 0, 0, 1f, 1f, 1f, 0, 0, 0,
-                "⚠️ Не удалось зафиксировать нейтральный лист в центре кадра. Поднесите белый лист ближе.");
+                L.Get("s_c96d1bc9bbf5"));
         }
 
         byte avgR = (byte)Math.Clamp(sumR / validCount, 0, 255);
@@ -125,7 +125,7 @@ public static class WhitebalanceCalibrator {
         bGain = (float)Math.Clamp(bGain / gGain, 0.60f, 1.80f);
         gGain = 1.0f;
 
-        string msg = $"✅ Откалибровано по белому листу: ~{estimatedKelvin} K (пресет {nearestPreset} K, R:{rGain:F2} B:{bGain:F2})";
+        string msg = L.Format("s_4774f7ebd94b", estimatedKelvin, nearestPreset, rGain, bGain);
         return new WbCalibrationResult(true, estimatedKelvin, nearestPreset, rGain, gGain, bGain, avgR, avgG, avgB, msg);
     }
 

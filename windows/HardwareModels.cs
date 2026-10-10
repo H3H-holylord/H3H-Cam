@@ -33,7 +33,7 @@ public sealed class PhoneCapabilities {
     public static PhoneCapabilities ParseJson(string json) {
         return JsonSerializer.Deserialize<PhoneCapabilities>(json,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-            ?? throw new InvalidDataException("Телефон вернул пустой каталог камер");
+            ?? throw new InvalidDataException(L.Get("s_c6f27c85bfa5"));
     }
 }
 
@@ -44,7 +44,8 @@ public sealed class CameraCapability {
     public float MinimumFocusDistance { get; set; }
     public bool Flash { get; set; }
     public List<VideoCapability> Modes { get; set; } = [];
-    public override string ToString() => Label;
+    [JsonIgnore] public string DisplayLabel => L.PhoneText(L.Relocalize(Label));
+    public override string ToString() => DisplayLabel;
 }
 
 public sealed class VideoCapability {
@@ -56,6 +57,6 @@ public sealed class VideoCapability {
     [JsonIgnore] public bool Scaled => CaptureWidth > 0 && CaptureHeight > 0 && (CaptureWidth != Width || CaptureHeight != Height);
     [JsonIgnore] public string Key => $"{Width}x{Height}";
     [JsonIgnore] public string Label => $"{Width} × {Height}" +
-        (Scaled ? $" · GPU из {CaptureWidth} × {CaptureHeight}" : "");
+        (Scaled ? L.Format("s_a8dd8f824e26", CaptureWidth, CaptureHeight) : "");
     public override string ToString() => Label;
 }

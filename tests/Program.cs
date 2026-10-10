@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -12,6 +13,10 @@ internal static class Program {
     [STAThread]
     private static int Main(string[] args) {
         try {
+            if (args.Length >= 2 && args[0] == "language-ui") {
+                LocalizationTests.Ui(Path.GetFullPath(args[1]));
+                return 0;
+            }
             if (args.Length >= 2 && args[0] == "render") {
                 int tab = args.Length > 2 && int.TryParse(args[2], out var t) ? t : 0;
                 int effect = args.Length > 3 && int.TryParse(args[3], out var ef) ? ef : -1;
@@ -259,7 +264,7 @@ internal static class Program {
                 await Stream(args[1], Path.GetFullPath(args[2]), args.ElementAtOrDefault(3) ?? "",
                     args.Length > 4 ? int.Parse(args[4]) : 12,
                     args.ElementAtOrDefault(5) ?? "auto", args.ElementAtOrDefault(6) ?? "continuous",
-                      args.Contains("screen-off"), args.Contains("60fps"), args.Contains("preview"), args.Contains("1080p"), args.Contains("virtual"), args.Contains("32mbps"), args.Contains("hevc"), args.Contains("1440p"), args.Contains("spout"), args.Contains("record"));
+                      args.Contains("screen-off"), args.Contains("60fps"), args.Contains("preview"), args.Contains("1080p"), args.Contains("virtual"), args.Contains("32mbps"), args.Contains("hevc"), args.Contains("1440p"), args.Contains("spout"), args.Contains("record"), args.Contains("language-toggle"));
                 return;
             case "pipe-test":
                 await PipeTest();
@@ -368,6 +373,7 @@ internal static class Program {
     }
 
     private static async Task Unit(string root) {
+        LocalizationTests.Unit();
         await LatestFramePumpTest();
         await LatestFramePumpTest(true);
         await VideoSchedulingTests.Preview();
@@ -1224,7 +1230,7 @@ internal static class Program {
     }
 
     private static async Task Stream(string transport, string root, string serial, int seconds,
-        string cameraKey, string focus, bool screenOff, bool sixtyFps, bool preview, bool fullHd, bool virtualCamera, bool highBitrate, bool hevc = false, bool qhd = false, bool spout = false, bool record = false) {
+        string cameraKey, string focus, bool screenOff, bool sixtyFps, bool preview, bool fullHd, bool virtualCamera, bool highBitrate, bool hevc = false, bool qhd = false, bool spout = false, bool record = false, bool languageToggle = false) {
         Directory.CreateDirectory(root);
         var settings = HardwareSettings(transport, serial);
         settings.CameraKey = cameraKey;
@@ -1272,7 +1278,23 @@ internal static class Program {
                 await engine.UpdateControls(settings, timeout.Token);
             }
             string? recordingPath = record ? engine.StartRecording(root) : null;
-            await Task.Delay(TimeSpan.FromSeconds(seconds), timeout.Token);
+            if (languageToggle) {
+                Assert(transport == "usb" && seconds >= 18, "Language hardware check needs USB and at least 18 seconds");
+                await Task.Delay(5000, timeout.Token);
+                var adbPath = ToolPaths.Find("adb.exe", settings.AdbPath);
+                async Task<string> Service() => await Processes.Run(adbPath, ["-s", serial, "shell", "dumpsys", "activity", "services", "com.h3h.s8cam"], timeout.Token);
+                var serviceId = Regex.Match(await Service(), @"ServiceRecord\{[^\r\n]*\.StreamService\}").Value;
+                Assert(serviceId.Length > 0, "Camera foreground service exists");
+                foreach (var language in new[] { "en", "ru", "auto" }) {
+                    L.Configure(language);
+                    await Processes.Run(adbPath, ["-s", serial, "shell", "am", "startservice", "-n", "com.h3h.s8cam/.StreamService", "-a", "UI_LANGUAGE_CHANGED", "--es", "language", language], timeout.Token);
+                    await Task.Delay(2000, timeout.Token);
+                    Assert(Regex.Match(await Service(), @"ServiceRecord\{[^\r\n]*\.StreamService\}").Value == serviceId,
+                        "Language update keeps the same foreground service");
+                }
+                await Task.Delay(TimeSpan.FromSeconds(seconds - 11), timeout.Token);
+                Console.WriteLine("PASS live RU/EN/Auto updates: camera service unchanged during capture");
+            } else await Task.Delay(TimeSpan.FromSeconds(seconds), timeout.Token);
             if (virtualCamera || spout) Assert(engine.VirtualCameraFrames > (seconds - 5) * 45,
                 "virtual camera / Spout2 decodes and publishes live frames");
             await engine.Stop();

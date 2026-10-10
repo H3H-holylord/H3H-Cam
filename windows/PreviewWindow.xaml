@@ -19,14 +19,14 @@
                 </Border>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button x:Name="SnapshotButton" Content="📸 СНИМОК" Padding="8,3" Margin="0,0,6,0" Click="Snapshot_Click" Background="#1C2E42" Foreground="#70E5C3" FontSize="11" ToolTip="Моментальный 4K/UHD снимок в папку Изображения/H3HCam (F9 / Ctrl+S)"/>
-                <Button x:Name="RecordButton" Content="🔴 ЗАПИСЬ" Padding="8,3" Margin="0,0,8,0" Click="Record_Click" Background="#2A141A" Foreground="#FF6B8B" FontSize="11" ToolTip="Локальная запись прямого MP4-потока без нагрузки на процессор (F10 / Ctrl+R)"/>
-                <Button x:Name="GridButton" Content="📐 GRID" Padding="8,3" Margin="0,0,8,0" Click="Grid_Click" Background="#152435" Foreground="#8498B4" FontSize="11" ToolTip="Направляющие сетки композиции (Rule of Thirds / 9:16)"/>
-                <Button x:Name="PeakButton" Content="🔍 PEAK" Padding="8,3" Margin="0,0,8,0" Click="Peak_Click" Background="#152435" Foreground="#8498B4" FontSize="11" ToolTip="Focus Peaking: подсветка контуров резкости"/>
-                <Button x:Name="ZebraButton" Content="🦓 ZEBRA" Padding="8,3" Margin="0,0,8,0" Click="Zebra_Click" Background="#152435" Foreground="#8498B4" FontSize="11" ToolTip="Zebra Pattern: индикатор зон пересвета"/>
-                <Button x:Name="LockAeAwbButton" Content="🔓 AE/AWB" Padding="8,3" Margin="0,0,8,0" Click="LockAeAwb_Click" Background="#152435" Foreground="#8498B4" FontSize="11" ToolTip="Быстрая фиксация/разблокировка автоэкспозиции и баланса белого"/>
-                <TextBlock Text="🎯 Клик: фокус  ·  Колёсико: зум  ·  Ср. клик / 2x: 1.0x  ·  F11: Полный экран" Foreground="#8498B4" FontSize="11" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <Button Content="⛶ Полный экран" Padding="10,3" Click="Fullscreen_Click" Background="#1C2E42" Foreground="#E7F0FF" FontSize="11"/>
+                <Button x:Name="SnapshotButton" Content="{DynamicResource s_3d7e3f5b1a17}" Padding="8,3" Margin="0,0,6,0" Click="Snapshot_Click" Background="#1C2E42" Foreground="#70E5C3" FontSize="11" ToolTip="{DynamicResource s_a24cda0bd19d}"/>
+                <Button x:Name="RecordButton" Content="{DynamicResource s_70c75c89eb79}" Padding="8,3" Margin="0,0,8,0" Click="Record_Click" Background="#2A141A" Foreground="#FF6B8B" FontSize="11" ToolTip="{DynamicResource s_fe554d1c0419}"/>
+                <Button x:Name="GridButton" Content="📐 GRID" Padding="8,3" Margin="0,0,8,0" Click="Grid_Click" Background="#152435" Foreground="#8498B4" FontSize="11" ToolTip="{DynamicResource s_7da1701fee82}"/>
+                <Button x:Name="PeakButton" Content="🔍 PEAK" Padding="8,3" Margin="0,0,8,0" Click="Peak_Click" Background="#152435" Foreground="#8498B4" FontSize="11" ToolTip="{DynamicResource s_cfaa42da882f}"/>
+                <Button x:Name="ZebraButton" Content="🦓 ZEBRA" Padding="8,3" Margin="0,0,8,0" Click="Zebra_Click" Background="#152435" Foreground="#8498B4" FontSize="11" ToolTip="{DynamicResource s_0cce60523b0a}"/>
+                <Button x:Name="LockAeAwbButton" Content="🔓 AE/AWB" Padding="8,3" Margin="0,0,8,0" Click="LockAeAwb_Click" Background="#152435" Foreground="#8498B4" FontSize="11" ToolTip="{DynamicResource s_ec1de973f6a2}"/>
+                <TextBlock Text="{DynamicResource s_dbd38a720a7f}" Foreground="#8498B4" FontSize="11" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <Button Content="{DynamicResource s_59decb82daa9}" Padding="10,3" Click="Fullscreen_Click" Background="#1C2E42" Foreground="#E7F0FF" FontSize="11"/>
             </StackPanel>
         </DockPanel>
 

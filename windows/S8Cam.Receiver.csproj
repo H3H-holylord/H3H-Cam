@@ -6,11 +6,12 @@
     <PublishSingleFile>true</PublishSingleFile><SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier><DebugType>none</DebugType>
-    <Version>4.0.11</Version><ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>4.0.12</Version><ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Localization\*.json" LogicalName="S8Cam.Localization.%(Filename)%(Extension)" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
     <Resource Include="app.ico" />
     <Resource Include="app.png" />

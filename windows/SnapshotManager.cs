@@ -25,7 +25,7 @@ public static class SnapshotManager {
         string? customDirectory = null) {
 
         if (bgraData == null || width <= 2 || height <= 2)
-            throw new ArgumentException("Недопустимые размеры или пустой буфер кадра для снимка");
+            throw new ArgumentException(L.Get("s_a082b6959810"));
 
         var targetDir = customDirectory ?? SnapshotDirectory;
         Directory.CreateDirectory(targetDir);

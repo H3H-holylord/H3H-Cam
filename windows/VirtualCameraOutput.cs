@@ -58,9 +58,9 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
         if (settings.SpoutOutput) {
             try {
                 spout = new SpoutSender("H3HCam", finalDim.Width, finalDim.Height);
-                log($"Spout2: активирован аппаратный D3D11 сендер «H3HCam» ({finalDim.Width}x{finalDim.Height})");
+                log(L.Format("s_9431df0be068", finalDim.Width, finalDim.Height));
             } catch (Exception ex) {
-                log("⚠️ Spout2 ошибка: " + ex.Message);
+                log(L.Get("s_67543833b1ed") + ex.Message);
             }
         }
 
@@ -69,9 +69,9 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
         if (settings.VirtualCamera) {
             try {
                 writer = new VirtualCameraWriter(finalDim.Width, finalDim.Height, settings.Fps);
-                log($"Камера для приложений: выберите «{VirtualCameraDriver.GetStatus().DeviceName}» ({finalDim.Width}x{finalDim.Height}). После установки обновите список камер или перезапустите приложение видеозвонков.");
+                log(L.Format("s_d3aa81195c5e", VirtualCameraDriver.GetStatus().DeviceName, finalDim.Width, finalDim.Height));
             } catch (Exception ex) {
-                log("⚠️ Виртуальная камера недоступна: " + ex.Message);
+                log(L.Get("s_c7473a81c3f9") + ex.Message);
             }
 
 
@@ -140,7 +140,7 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                 var exitTask = decoder.WaitForExitAsync(stop.Token);
                 var completed = await Task.WhenAny(connectTask, exitTask);
                 if (completed == exitTask) {
-                    throw new IOException($"FFmpeg завершился до подключения к Named Pipe (код {decoder.ExitCode})");
+                    throw new IOException(L.Format("s_0d3959b61ac5", decoder.ExitCode));
                 }
                 await connectTask;
             }
@@ -255,7 +255,7 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                 Interlocked.Increment(ref frames);
             }, stop.Token, () => Interlocked.Increment(ref skippedFrames), dedicatedVideoThread:true);
         } catch (OperationCanceledException) {}
-        catch (Exception ex) { if (!stop.IsCancellationRequested) log("Прямой видеовывод остановлен: " + ex.Message); }
+        catch (Exception ex) { if (!stop.IsCancellationRequested) log(L.Get("s_61f56716b8b5") + ex.Message); }
     }
 
     public async ValueTask DisposeAsync() {

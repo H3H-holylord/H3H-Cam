@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
 using S8Cam;
@@ -23,7 +24,7 @@ foreach (var group in new[] { "ffmpeg", "adb" }) {
         }
     }
 }
-foreach (var name in new[] { "H3HCam Receiver.exe", "libusb-1.0.dll", "H3H-Cam-4.0.5.apk", "tools/virtualcam/obs-virtualcam-module64.dll", "tools/virtualcam/obs-virtualcam-module32.dll", "Установить на телефон.cmd", "licenses/FFmpeg-GPL-3.0.txt", "licenses/FFmpeg-Build-9.0.1.txt", "licenses/Android-Platform-Tools-NOTICE.txt", "licenses/U2NET-Apache-2.0.txt" })
+foreach (var name in new[] { "H3HCam Receiver.exe", "libusb-1.0.dll", "H3H-Cam-4.0.6.apk", "tools/virtualcam/obs-virtualcam-module64.dll", "tools/virtualcam/obs-virtualcam-module32.dll", "Установить на телефон.cmd", "Install-on-phone.cmd", "README.en.md", "README-English.txt", "docs/QUICKSTART.en.md", "licenses/FFmpeg-GPL-3.0.txt", "licenses/FFmpeg-Build-9.0.1.txt", "licenses/Android-Platform-Tools-NOTICE.txt", "licenses/U2NET-Apache-2.0.txt" })
     Assert(File.Exists(Path.Combine(root, name)), "Missing package component: " + name);
 using (var model = File.OpenRead(Path.Combine(root, "models", "u2netp.onnx")))
     Assert(Convert.ToHexString(SHA256.HashData(model)).Equals(components.GetProperty("model").GetProperty("sha256").GetString(), StringComparison.OrdinalIgnoreCase), "Model mismatch");

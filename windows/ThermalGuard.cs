@@ -55,7 +55,7 @@ public sealed class ThermalGuard {
             IsThrottled = true;
             OriginalBitrate = settings.BitrateMbps;
             var reduced = Math.Max(6, (int)(settings.BitrateMbps * 0.6));
-            onThrottle(reduced, temp, $"Температура процессора {temp:F1} °C превысила лимит {threshold} °C");
+            onThrottle(reduced, temp, L.Format("s_21e8bfa5ba27", temp, threshold));
         } else if (IsThrottled && temp <= threshold - 3) {
             IsThrottled = false;
             var orig = OriginalBitrate ?? settings.BitrateMbps;

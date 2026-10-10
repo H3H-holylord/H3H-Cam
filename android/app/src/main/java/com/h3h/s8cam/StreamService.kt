@@ -31,21 +31,33 @@ class StreamService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel("stream", "H3H Cam streaming", NotificationManager.IMPORTANCE_LOW))
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        val stop = PendingIntent.getService(this, 1, Intent(this, StreamService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
-        val notification = Notification.Builder(this, "stream").setContentTitle("H3H Cam · камера активна")
-            .setContentText("Передача видео. Экран можно выключить кнопкой питания.")
-            .setSmallIcon(android.R.drawable.presence_video_online).setContentIntent(open)
-            .addAction(Notification.Action.Builder(null, "STOP", stop).build()).setOngoing(true).build()
+        refreshForegroundNotification()
+    }
+    private fun refreshForegroundNotification() {
+        val notification = notification()
         if (Build.VERSION.SDK_INT >= 30) {
             startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
         } else {
             startForeground(1, notification)
         }
     }
+    private fun notification(): Notification {
+        val uiContext = UiLanguage.context(this)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel("stream", uiContext.getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW))
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val stop = PendingIntent.getService(this, 1, Intent(this, StreamService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
+        return Notification.Builder(this, "stream").setContentTitle(uiContext.getString(R.string.notification_title))
+            .setContentText(uiContext.getString(R.string.notification_text))
+            .setSmallIcon(android.R.drawable.presence_video_online).setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, uiContext.getString(R.string.stop), stop).build()).setOngoing(true).build()
+    }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "UI_LANGUAGE_CHANGED") {
+            intent.getStringExtra("language")?.takeIf { it in listOf("auto", "ru", "en") }?.let { UiLanguage.save(this, it) }
+            refreshForegroundNotification()
+            return START_NOT_STICKY
+        }
         if (intent?.action == "STOP") { stopSelf(); return START_NOT_STICKY }
         if (intent?.action == "TAP_FOCUS" || intent?.action == "com.h3h.s8cam.TAP_FOCUS" || intent?.action?.endsWith("TAP_FOCUS") == true) {
             val fx = intent.getFloatExtra("x", 0.5f)

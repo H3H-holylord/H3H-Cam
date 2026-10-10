@@ -5,6 +5,7 @@ using System.Text.Json;
 namespace S8Cam;
 
 public sealed class Settings {
+    public string Language { get; set; } = "auto";
     public string Transport { get; set; } = "direct";
     public string PhoneIp { get; set; } = "192.168.1.100";
     public string PcIp { get; set; } = "";
@@ -260,40 +261,40 @@ public sealed class Settings {
     public void Validate(string? effectiveTransport = null) {
         var transport = effectiveTransport ?? Transport;
         if (Transport is not ("auto" or "wifi" or "usb" or "direct") || transport is not ("auto" or "wifi" or "usb" or "direct"))
-            throw new ArgumentException("Неизвестный транспорт");
+            throw new ArgumentException(L.Get("s_791ed1bb43ac"));
         if (Fps is < 10 or > 60 || BitrateMbps is < 1 or > 80)
-            throw new ArgumentException("FPS 10–60, битрейт 1–80 Mbps");
+            throw new ArgumentException(L.Get("s_5d3dc1bc6b81"));
         if (WifiLimitMbps is not (0 or 12 or 20 or 32))
-            throw new ArgumentException("Ограничение Wi-Fi: без ограничения, 12, 20 или 32 Mbps");
+            throw new ArgumentException(L.Get("s_c908b4d95c88"));
         if (MinimumWifiBitrateMbps is < 4 or > 32)
-            throw new ArgumentException("Минимальный адаптивный битрейт должен быть от 4 до 32 Mbps");
+            throw new ArgumentException(L.Get("s_90d9aad47dc6"));
         if (Width is < 320 or > 4096 || Height is < 240 or > 2160)
-            throw new ArgumentException("Неверное разрешение");
+            throw new ArgumentException(L.Get("s_1d671cfd8ae9"));
         if (new[] { RtpPort, UsbPort, ObsPort, PreviewPort }.Any(p => p is < 1024 or > 65534))
-            throw new ArgumentException("Порты: 1024–65534");
+            throw new ArgumentException(L.Get("s_1bfbfdf0fbf0"));
         var udp = new[] { RtpPort, ObsPort, PreviewPort };
         if (udp.Distinct().Count() != udp.Length)
-            throw new ArgumentException("RTP, OBS и preview должны использовать разные UDP порты");
+            throw new ArgumentException(L.Get("s_b5ed8f998589"));
         if (transport == "wifi" && (!PhoneEndpoint(PhoneIp) || !Ipv4(PcIp)))
-            throw new ArgumentException("Укажите адрес телефона и IPv4 компьютера");
+            throw new ArgumentException(L.Get("s_cb3d66f63eaf"));
         if (Focus is not ("continuous" or "auto" or "infinity" or "manual") ||
             !float.IsFinite(FocusDistance) || FocusDistance < 0)
-            throw new ArgumentException("Неверный фокус");
+            throw new ArgumentException(L.Get("s_3917c61ca304"));
         if (Wb is not ("auto" or "daylight" or "cloudy" or "incandescent" or "fluorescent"))
-            throw new ArgumentException("Неверный WB");
-        if (PowerMode is not ("maximum" or "balanced" or "saving")) throw new ArgumentException("Неверный Power mode");
-        if (!float.IsFinite(Zoom) || Zoom is < 1.0f or > 10.0f) throw new ArgumentException("Зум должен быть от 1.0x до 10.0x");
-        if (!float.IsFinite(AutoFramingZoom) || AutoFramingZoom is < 1.0f or > 3.0f) throw new ArgumentException("Масштаб кадрирования: 1.0x–3.0x");
-        if (!float.IsFinite(AutoFramingSpeed) || AutoFramingSpeed is < 0.1f or > 5.0f) throw new ArgumentException("Скорость кадрирования: 0.1x–5.0x");
-        if (!float.IsFinite(AutoFramingDeadzone) || AutoFramingDeadzone is < 0.005f or > 0.5f) throw new ArgumentException("Мертвая зона кадрирования: 0.005–0.5");
-        if (Codec is not ("h264" or "hevc")) throw new ArgumentException("Кодек: h264 или hevc");
+            throw new ArgumentException(L.Get("s_538158b4f73e"));
+        if (PowerMode is not ("maximum" or "balanced" or "saving")) throw new ArgumentException(L.Get("s_ac1a35870437"));
+        if (!float.IsFinite(Zoom) || Zoom is < 1.0f or > 10.0f) throw new ArgumentException(L.Get("s_05ff313dc5f9"));
+        if (!float.IsFinite(AutoFramingZoom) || AutoFramingZoom is < 1.0f or > 3.0f) throw new ArgumentException(L.Get("s_dd8f2240d2a7"));
+        if (!float.IsFinite(AutoFramingSpeed) || AutoFramingSpeed is < 0.1f or > 5.0f) throw new ArgumentException(L.Get("s_b9791ed73d36"));
+        if (!float.IsFinite(AutoFramingDeadzone) || AutoFramingDeadzone is < 0.005f or > 0.5f) throw new ArgumentException(L.Get("s_4b57a44e40ae"));
+        if (Codec is not ("h264" or "hevc")) throw new ArgumentException(L.Get("s_62acd68dd765"));
         if (OrientationMode is not ("16:9" or "9:16_crop" or "9:16_fit" or "9:16_autoframing"))
-            throw new ArgumentException("Неизвестная ориентация кадра");
-        if (Rotation is not (0 or 90 or 180 or 270)) throw new ArgumentException("Поворот: 0, 90, 180 или 270 градусов");
+            throw new ArgumentException(L.Get("s_25e7dd1154ff"));
+        if (Rotation is not (0 or 90 or 180 or 270)) throw new ArgumentException(L.Get("s_32c415ce3e2b"));
         if (ManualIso is < 0 or > 25600) throw new ArgumentException("ISO: 0–25600");
         if (ShutterSpeedNs is < 0 or > 1_000_000_000L) throw new ArgumentException("Shutter: 0–1s");
         if (ManualWbKelvin < 0 || (ManualWbKelvin > 0 && (ManualWbKelvin < 2000 || ManualWbKelvin > 10000))) throw new ArgumentException("WB Kelvin: 2000–10000");
-        if (!Preview && !Obs && !VirtualCamera && !SpoutOutput) throw new ArgumentException("Включите просмотр, виртуальную камеру, Spout или выход OBS");
+        if (!Preview && !Obs && !VirtualCamera && !SpoutOutput) throw new ArgumentException(L.Get("s_ac16ac51f54c"));
     }
 
     public static bool Ipv4(string value) =>

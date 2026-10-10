@@ -26,13 +26,13 @@ public static class VirtualCameraDriver {
             using var classes32 = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Registry32);
             var camera32 = ReadRegistration(classes32, x64: false);
             if (!camera32.Ready) return camera64 with {
-                Ready = false, Message = "32-битная камера требует установки/восстановления; 64-битная зарегистрирована"
+                Ready = false, Message = L.Get("s_f94eb7c8d18b")
             };
             return camera64.DeviceName == camera32.DeviceName ? camera64 : camera64 with {
-                Message = $"Камера зарегистрирована: {camera64.DeviceName} (64-бит) / {camera32.DeviceName} (32-бит)"
+                Message = L.Format("s_33d53f59c723", camera64.DeviceName, camera32.DeviceName)
             };
         } catch (Exception ex) {
-            return new(false, "H3H Cam", null, "Не удалось проверить регистрацию камеры: " + ex.Message);
+            return new(false, "H3H Cam", null, L.Get("s_1348c50745e4") + ex.Message);
         }
     }
 
@@ -41,9 +41,9 @@ public static class VirtualCameraDriver {
         using var device = classes.OpenSubKey($@"CLSID\{CameraCategory}\Instance\{CameraClsid}");
         var name = device?.GetValue("FriendlyName") as string ?? "H3H Cam";
         var dll = server?.GetValue(null) as string;
-        if (string.IsNullOrWhiteSpace(dll)) return new(false, name, dll, "Виртуальная камера не установлена");
+        if (string.IsNullOrWhiteSpace(dll)) return new(false, name, dll, L.Get("s_5d638d3c4c01"));
         dll = Environment.ExpandEnvironmentVariables(dll.Trim('"'));
-        if (!IsDriverBinary(dll, x64)) return new(false, name, dll, "Модуль камеры отсутствует или повреждён — требуется восстановление");
+        if (!IsDriverBinary(dll, x64)) return new(false, name, dll, L.Get("s_1c8457692424"));
         using var camera = classes.OpenSubKey($@"CLSID\{CameraClsid}");
         if ((camera?.GetValue(null) as string)?.StartsWith("H3H Cam", StringComparison.Ordinal) == true) {
             var folderHash = Path.GetFileName(Path.GetDirectoryName(dll))?.Split('-')[0];
@@ -51,17 +51,17 @@ public static class VirtualCameraDriver {
                 try {
                     using var input = File.OpenRead(dll);
                     if (!Convert.ToHexString(SHA256.HashData(input)).StartsWith(folderHash, StringComparison.OrdinalIgnoreCase))
-                        return new(false, name, dll, "Сохранённый модуль камеры повреждён — требуется восстановление");
+                        return new(false, name, dll, L.Get("s_ff4b8706c226"));
                 } catch {
-                    return new(false, name, dll, "Не удалось прочитать модуль камеры — требуется восстановление");
+                    return new(false, name, dll, L.Get("s_bfc21b288e65"));
                 }
             }
         }
         if (device?.GetValue("CLSID") is not string clsid || !clsid.Equals(CameraClsid, StringComparison.OrdinalIgnoreCase))
-            return new(false, name, dll, "Камера не зарегистрирована в списке устройств — требуется восстановление");
+            return new(false, name, dll, L.Get("s_43bc2bcc9848"));
         if (device.GetValue("FilterData") is not byte[] data || data.Length == 0)
-            return new(false, name, dll, "Отсутствует описание видеовыхода — требуется восстановление");
-        return new(true, name, dll, $"Камера зарегистрирована: {name}");
+            return new(false, name, dll, L.Get("s_f26da27ac202"));
+        return new(true, name, dll, L.Format("s_fa264a74ed1a", name));
     }
 
     internal static bool IsDriverBinary(string path, bool x64) {
@@ -91,7 +91,7 @@ public static class VirtualCameraDriver {
     // Keep the COM server outside the unpacked ZIP. Moving/deleting a portable folder
     // must not leave camera registrations pointing at a missing DLL.
     internal static string InstallInto(RegistryKey userClasses, string sourceDll, string installDir, bool x64) {
-        if (!IsDriverBinary(sourceDll, x64)) throw new IOException("Модуль виртуальной камеры отсутствует или повреждён. Распакуйте Windows ZIP целиком.");
+        if (!IsDriverBinary(sourceDll, x64)) throw new IOException(L.Get("s_e23453624c46"));
         string hash;
         using (var input = File.OpenRead(sourceDll)) hash = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
         var targetDir = Path.Combine(installDir, hash[..16]);
@@ -138,10 +138,10 @@ public static class VirtualCameraDriver {
                 if (status.Ready && (!ownedByH3H || stable)) continue;
                 var source = FindDriverDll(x64);
                 if (source == null) {
-                    throw new FileNotFoundException($"Не найден {(x64 ? "64" : "32")}-битный модуль виртуальной камеры. Распакуйте Windows ZIP целиком, включая tools/virtualcam.");
+                    throw new FileNotFoundException(L.Format("s_bd3c68ee3379", (x64 ? "64" : "32")));
                 }
                 InstallInto(classes, source, installDir, x64);
-                if (!ReadRegistration(mergedClasses, x64).Ready) throw new IOException("Не удалось проверить регистрацию виртуальной камеры");
+                if (!ReadRegistration(mergedClasses, x64).Ready) throw new IOException(L.Get("s_7a8201846bb3"));
             }
             return GetStatus().Ready;
         }

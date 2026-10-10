@@ -111,7 +111,7 @@ public partial class PreviewWindow : Window {
         if (RecBadgeText != null && isRecording)
             RecBadgeText.Text = $"🔴 REC {elapsed:mm\\:ss}";
         if (RecordButton != null) {
-            RecordButton.Content = isRecording ? $"⏹️ СТОП ({elapsed:mm\\:ss})" : "🔴 ЗАПИСЬ";
+            RecordButton.Content = isRecording ? L.Format("s_4d566ce84b70", elapsed) : L.Get("s_70c75c89eb79");
             RecordButton.Background = isRecording
                 ? new SolidColorBrush(Color.FromRgb(90, 18, 26))
                 : new SolidColorBrush(Color.FromRgb(42, 20, 26));

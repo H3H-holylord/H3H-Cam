@@ -3,6 +3,7 @@ package com.h3h.s8cam
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -11,12 +12,14 @@ import android.hardware.usb.UsbManager
 import android.os.*
 import android.view.Gravity
 import android.view.WindowManager
+import android.view.View
 import android.widget.*
 import org.json.JSONObject
 import java.util.Locale
 
 /** The phone is controlled by Windows so two setting screens cannot conflict. */
 open class MainActivity : Activity() {
+    override fun attachBaseContext(base: Context) = super.attachBaseContext(UiLanguage.context(base))
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var root: LinearLayout
     private lateinit var status: TextView
@@ -38,12 +41,13 @@ open class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         window.navigationBarColor = Color.rgb(12, 18, 29)
         buildUi()
-        launchPending = this is ControlActivity && intent.action == "com.h3h.s8cam.START"
-        commandPending = launchPending
-        if (intent.action == UsbManager.ACTION_USB_ACCESSORY_ATTACHED) {
+        launchPending = saved?.getBoolean("launchPending") ?: (this is ControlActivity && intent.action == "com.h3h.s8cam.START")
+        commandPending = saved?.getBoolean("commandPending") ?: launchPending
+        accessoryPending = saved?.getBoolean("accessoryPending") ?: false
+        if (saved == null && intent.action == UsbManager.ACTION_USB_ACCESSORY_ATTACHED) {
             accessoryPending = true
             launchPending = true
-            status.text = "USB Direct подключён · ожидание параметров Windows"
+            status.text = getString(R.string.usb_attached)
         }
     }
 
@@ -73,40 +77,65 @@ open class MainActivity : Activity() {
         }
         setContentView(ScrollView(this).apply { addView(root); isFillViewport = true })
         addText("H3H CAM", 34f, Color.WHITE).setTypeface(null, Typeface.BOLD)
-        addText("CONTROLLED BY WINDOWS  /  H.264", 12f, Color.rgb(54, 215, 180))
-        addText("Разрешение, FPS, битрейт, камера, фокус, экспозиция и баланс белого задаются только в Windows-клиенте. На телефоне ничего выравнивать не нужно.", 16f, Color.WHITE)
+        addText(getString(R.string.language_label), 12f)
+        val languageValues = listOf("auto", "ru", "en")
+        val languagePicker = Spinner(this).apply {
+            id = R.id.language_picker
+            setPopupBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.rgb(28, 40, 57)))
+            adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf(getString(R.string.language_auto), "Русский", "English")) {
+                override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                    super.getView(position, convertView, parent).apply { (this as TextView).setTextColor(Color.WHITE) }
+                override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                    super.getDropDownView(position, convertView, parent).apply { (this as TextView).setTextColor(Color.WHITE) }
+            }
+            setSelection(languageValues.indexOf(UiLanguage.selection(this@MainActivity)))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    val value = languageValues[position]
+                    if (value == UiLanguage.selection(this@MainActivity)) return
+                    UiLanguage.save(this@MainActivity, value)
+                    if (StreamStats.running) startService(Intent(this@MainActivity, StreamService::class.java).setAction("UI_LANGUAGE_CHANGED"))
+                    recreate()
+                }
+            }
+        }
+        root.addView(languagePicker, LinearLayout.LayoutParams(-1, dp(48)))
+        addText(getString(R.string.controlled_by_windows), 12f, Color.rgb(54, 215, 180))
+        addText(getString(R.string.camera_settings_hint), 16f, Color.WHITE)
 
         permission = addText(permissionText(), 14f,
             if (hasCameraPermission()) Color.rgb(112, 229, 195) else Color.rgb(245, 184, 92))
-        if (!hasCameraPermission()) addButton("РАЗРЕШИТЬ КАМЕРУ") {
+        if (!hasCameraPermission()) addButton(getString(R.string.camera_allow)) {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), 10)
         }
 
         val routes = try { CameraCatalog.list(this) } catch (_: Exception) { emptyList() }
         val modeCount = routes.sumOf { it.modes.size }
         val sixtyCount = routes.sumOf { camera -> camera.modes.count { 60 in it.fps } }
-        addText("Windows-клиент увидит: ${routes.size} модулей, $modeCount режимов, $sixtyCount режимов с 60 FPS.")
+        addText(getString(R.string.camera_catalog_summary, routes.size, modeCount, sixtyCount))
 
-        status = addText(if (StreamStats.running) StreamStats.state else
-            "Готово · откройте H3H Cam на компьютере", 16f, Color.WHITE)
-        addButton("STOP") {
+        status = addText(if (StreamStats.running) UiLanguage.state(this@MainActivity, StreamStats.state) else
+            getString(R.string.ready_hint), 16f, Color.WHITE)
+        addButton(getString(R.string.stop)) {
             launchPending = false
             stopService(Intent(this, StreamService::class.java))
-            status.text = "Остановлено"
+            status.text = getString(R.string.state_stopped)
         }
-        addButton("📡 НАЙТИ КОМПЬЮТЕР (WI-FI)") { discoverWifiPc() }
-        addButton("ЧЁРНЫЙ ЭКРАН") { showBlackScreen() }
-        addText("Для Wi-Fi и USB через ADB поток запускается с компьютера. USB Direct запускается после системного запроса Android. Кнопка питания может физически выключить экран, поток продолжит работать.")
+        addButton(getString(R.string.find_computer)) { discoverWifiPc() }
+        addButton(getString(R.string.black_screen)) { showBlackScreen() }
+        addText(getString(R.string.transport_hint))
     }
 
     private fun discoverWifiPc() {
-        status.text = "Поиск H3H Cam в локальной сети Wi-Fi..."
+        status.text = getString(R.string.wifi_searching)
         Thread {
             try {
-                val socket = java.net.DatagramSocket().apply {
+                java.net.DatagramSocket().apply {
                     broadcast = true
                     soTimeout = 2500
-                }
+                }.use { socket ->
                 val pingMsg = "H3HCAM_DISCOVERY_PING " + JSONObject().put("model", Build.MODEL).toString()
                 val pingBytes = pingMsg.toByteArray(Charsets.UTF_8)
                 val broadcastGlobal = java.net.InetAddress.getByName("255.255.255.255")
@@ -134,18 +163,18 @@ open class MainActivity : Activity() {
                         val jsonStart = reply.indexOf('{')
                         if (jsonStart >= 0) {
                             val obj = JSONObject(reply.substring(jsonStart))
-                            val pcName = obj.optString("pc_name", "Компьютер")
+                            val pcName = obj.optString("pc_name", getString(R.string.computer))
                             val rawPcIp = obj.optString("pc_ip", "").trim()
                             val pcIp = if (rawPcIp.isNotEmpty() && rawPcIp != "127.0.0.1" && rawPcIp != "0.0.0.0") rawPcIp else (packet.address.hostAddress ?: "")
                             val port = obj.optInt("port", 5000)
 
-                            socket.close()
                             ui.post {
-                                status.text = "Найден: $pcName ($pcIp)"
+                                if (isFinishing || isDestroyed) return@post
+                                status.text = getString(R.string.wifi_found, pcName, pcIp)
                                 val dialog = android.app.AlertDialog.Builder(this)
-                                    .setTitle("H3H Cam найден!")
-                                    .setMessage("Подключиться к $pcName ($pcIp:$port) по Wi-Fi?")
-                                    .setPositiveButton("СТАРТ") { _, _ ->
+                                    .setTitle(getString(R.string.wifi_found_title))
+                                    .setMessage(getString(R.string.wifi_connect_question, pcName, pcIp, port))
+                                    .setPositiveButton(getString(R.string.start)) { _, _ ->
                                         val current = StreamSettings.load(this).copy(
                                             transport = "wifi",
                                             ip = pcIp,
@@ -158,9 +187,9 @@ open class MainActivity : Activity() {
                                         } else {
                                             startService(serviceIntent)
                                         }
-                                        status.text = "Wi-Fi поток запущен на $pcIp:$port"
+                                        status.text = getString(R.string.wifi_started, pcIp, port)
                                     }
-                                    .setNegativeButton("Отмена", null)
+                                    .setNegativeButton(getString(R.string.cancel), null)
                                     .create()
                                 dialog.show()
                             }
@@ -168,10 +197,10 @@ open class MainActivity : Activity() {
                         }
                     }
                 }
-                socket.close()
-                ui.post { status.text = "Компьютер не ответил. Убедитесь, что H3H Cam открыта на ПК и они в одной Wi-Fi сети." }
+                }
+                ui.post { if (!isFinishing && !isDestroyed) status.text = getString(R.string.wifi_no_response) }
             } catch (e: Exception) {
-                ui.post { status.text = "Поиск не удался: ${e.message ?: "таймаут"}" }
+                ui.post { if (!isFinishing && !isDestroyed) status.text = getString(R.string.wifi_search_failed, e.message ?: getString(R.string.timeout)) }
             }
         }.start()
     }
@@ -179,7 +208,7 @@ open class MainActivity : Activity() {
     private fun hasCameraPermission() =
         checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
     private fun permissionText() =
-        if (hasCameraPermission()) "● Камера разрешена" else "● Нужно один раз разрешить камеру"
+        if (hasCameraPermission()) getString(R.string.camera_allowed) else getString(R.string.camera_permission_needed)
 
     private fun showBlackScreen() {
         black = true
@@ -187,7 +216,7 @@ open class MainActivity : Activity() {
         setContentView(TextView(this).apply {
             setBackgroundColor(Color.BLACK)
             setTextColor(Color.DKGRAY)
-            text = "Коснитесь для возврата\nКнопка питания выключает экран"
+            text = getString(R.string.black_screen_hint)
             gravity = Gravity.CENTER
             setOnClickListener {
                 black = false
@@ -209,12 +238,12 @@ open class MainActivity : Activity() {
                 val accessory = if (Build.VERSION.SDK_INT >= 33)
                     intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY, UsbAccessory::class.java)
                 else @Suppress("DEPRECATION") intent.getParcelableExtra<UsbAccessory>(UsbManager.EXTRA_ACCESSORY)
-                requireNotNull(accessory) { "USB accessory не найден" }
+                requireNotNull(accessory) { getString(R.string.usb_accessory_missing) }
                 accessoryPending = false
                 val settings = StreamSettings.load(this).copy(transport = "direct", sessionId = "aoa")
                 startForegroundService(settings.applyTo(Intent(this, StreamService::class.java))
                     .putExtra(UsbManager.EXTRA_ACCESSORY, accessory))
-                status.text = "USB Direct · ожидание команды Windows"
+                status.text = getString(R.string.usb_waiting)
                 return
             }
             if (!commandPending) return
@@ -222,9 +251,9 @@ open class MainActivity : Activity() {
             val settings = StreamSettings.load(this).withIntent(intent)
             settings.save(this)
             startForegroundService(settings.applyTo(Intent(this, StreamService::class.java)))
-            status.text = "Параметры Windows приняты · запуск камеры"
+            status.text = getString(R.string.settings_received)
         } catch (e: Exception) {
-            Toast.makeText(this, e.message ?: "Не удалось запустить", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, e.message ?: getString(R.string.start_failed), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -237,6 +266,13 @@ open class MainActivity : Activity() {
     override fun onPause() {
         ui.removeCallbacks(refresh)
         super.onPause()
+    }
+
+    override fun onSaveInstanceState(out: Bundle) {
+        out.putBoolean("launchPending", launchPending)
+        out.putBoolean("commandPending", commandPending)
+        out.putBoolean("accessoryPending", accessoryPending)
+        super.onSaveInstanceState(out)
     }
 
     override fun onNewIntent(next: Intent) {
@@ -258,27 +294,27 @@ open class MainActivity : Activity() {
         if (code == 10 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) startIfReady()
         else if (code == 10) {
             launchPending = false
-            Toast.makeText(this, "Для передачи нужно разрешение камеры", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.camera_permission_error), Toast.LENGTH_LONG).show()
         }
     }
 
     private val refresh = object : Runnable {
         override fun run() {
             if (!black && ::status.isInitialized) {
-                if (!StreamStats.running) status.text = StreamStats.state
+                if (!StreamStats.running) status.text = UiLanguage.state(this@MainActivity, StreamStats.state)
                 else try {
                     val j = JSONObject(StreamStats.snapshot)
                     status.text = String.format(
                         Locale.US,
-                        "%s\n%s · %s\n%d → %.1f fps · %.2f Mbps\n%d packets · dropped %d\n%s\nБатарея %s%% · %s · %s °C",
-                        StreamStats.state,
-                        j.optString("camera", "—"), j.optString("resolution", "—"),
+                        getString(R.string.stream_summary),
+                        UiLanguage.state(this@MainActivity, StreamStats.state),
+                        UiLanguage.camera(this@MainActivity, j.optString("camera", "—")), j.optString("resolution", "—"),
                         j.optInt("requestedFps"), j.optDouble("fps", 0.0), j.optDouble("bitrateMbps", 0.0),
                         j.optLong("packets"), j.optLong("dropped"), StreamStats.codec,
                         j.optString("batteryPercent", "—"), j.optString("batteryStatus", "N/A"),
                         j.optString("batteryTemperatureC", "—")
                     )
-                } catch (_: Exception) { status.text = StreamStats.state }
+                } catch (_: Exception) { status.text = UiLanguage.state(this@MainActivity, StreamStats.state) }
             }
             ui.postDelayed(this, 1000)
         }

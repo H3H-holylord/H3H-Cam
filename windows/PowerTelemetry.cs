@@ -20,8 +20,8 @@ public sealed record PowerTelemetry(
         Bool(j,"batteryCurrentSignNormalized"),
         Double(j, "cpuUsagePercent"), Double(j, "cpuTemperatureC"));
     public bool IsNetDischarging => Source != "Battery" && ((CurrentMa != null && CurrentMa < -80) || (PowerW != null && PowerW < -0.3));
-    public string Headline => $"{(Percent is { } p ? p + "%" : "N/A")}  •  {(IsNetDischarging ? $"Разряд {CurrentMa:F0} mA" : Status)}";
-    public string Compact => $"Батарея {(Percent is { } p ? p + "%" : "N/A")} · {Status} · {Source} · {Format(TemperatureC,"0.0","°C")}" +
+    public string Headline => $"{(Percent is { } p ? p + "%" : "N/A")}  •  {(IsNetDischarging ? L.Format("s_093a5f60dfcf", CurrentMa) : Status)}";
+    public string Compact => L.Format("s_9f18885868f2", (Percent is { } p ? p + "%" : "N/A"), Status, Source, Format(TemperatureC,"0.0","°C")) +
         (CpuTemperatureC != null || CpuPercent != null ? $" · CPU {Format(CpuTemperatureC, "0.0", "°C")} ({Format(CpuPercent, "0.0", "%")})" : "");
     public string Details => string.Join("\n", new[] {
         $"CPU load            {Format(CpuPercent, "0.0", "%")}",
@@ -49,13 +49,13 @@ public sealed class PowerHistory {
     public IReadOnlyList<Sample> Samples=>samples;
     public void Add(PowerTelemetry value){var now=DateTime.Now;if(samples.Count>0&&now-samples[^1].Time<TimeSpan.FromMilliseconds(800))return;samples.Add(new(now,value));samples.RemoveAll(x=>now-x.Time>TimeSpan.FromMinutes(60));}
     public string Assessment(PowerTelemetry current){
-        if(current.Percent is <=15)return "⚠ Низкий заряд батареи";
-        if(current.TemperatureC is >=42)return "⚠ Высокая температура по порогу H3H Cam; это не предел производителя";
-        if(current.IsNetDischarging)return $"⚠ USB-питание не покрывает расход (ток {current.CurrentMa:F0} mA). Батарея разряжается! Подключите к USB 3.0 или зарядному хабу.";
+        if(current.Percent is <=15)return L.Get("s_ae2745004692");
+        if(current.TemperatureC is >=42)return L.Get("s_b6cb50507dc7");
+        if(current.IsNetDischarging)return L.Format("s_9e117f94ea9e", current.CurrentMa);
         var old=samples.FirstOrDefault(x=>DateTime.Now-x.Time>=TimeSpan.FromMinutes(2));
-        if(old==null||old.Value.Percent==null||current.Percent==null)return "Оценка баланса питания появится через 2 минуты";
+        if(old==null||old.Value.Percent==null||current.Percent==null)return L.Get("s_b1c0b03445b8");
         var delta=current.Percent.Value-old.Value.Percent.Value;
-        if(current.Source!="Battery"&&delta<=-1)return "⚠ USB-питание не покрывает расход (заряд падает). Погасите экран, снизьте FPS/битрейт или используйте powered USB hub.";
-        return delta>=1?"Заряд увеличивается":"Power balanced · заряд примерно стабилен";
+        if(current.Source!="Battery"&&delta<=-1)return L.Get("s_b8f357747008");
+        return delta>=1?L.Get("s_65291179f45c"):L.Get("s_e3e227332a06");
     }
 }
