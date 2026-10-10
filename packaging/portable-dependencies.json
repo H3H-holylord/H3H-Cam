@@ -1,0 +1,31 @@
+{
+  "ffmpeg": {
+    "version": "9.0.1-full_build-www.gyan.dev",
+    "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.1/ffmpeg-9.0.1-full_build.zip",
+    "archiveSha256": "2e8e28af97c2ae338ccef92e36da9b2a4cd21d0cad9dde093545606cb07f5b00",
+    "source": "https://github.com/FFmpeg/FFmpeg/commit/bf1b838f2a",
+    "files": {
+      "ffmpeg.exe": "57c56e369d5b4873b4d93fc1a1d833cb7cd8bc9325c14b05c34ce60b22842d8a",
+      "ffplay.exe": "caf78df19f40fc8002d455d0b33006b8bab11f04470dda7e34b36b9ee64531c2"
+    }
+  },
+  "adb": {
+    "version": "37.0.1-15733141",
+    "url": "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
+    "archiveSha256": "45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99",
+    "source": "https://android.googlesource.com/platform/packages/modules/adb/",
+    "files": {
+      "adb.exe": "b4a6b455702684652cccf7b46258b29e653538904359a58fd4931cf3ef286b3f",
+      "AdbWinApi.dll": "c1d653030b4bde65d3e07e4d0b0979e17be56df1436cdd15528630f27808050d",
+      "AdbWinUsbApi.dll": "0710e894d9b40f71a670c13c694079d564c92c1279da382cfe4850983aaebe1b",
+      "libwinpthread-1.dll": "f2044c755e39efc5d47f47c5a942178dd6d79dc8945bb182dc8753d10e2a4269"
+    }
+  },
+  "model": {
+    "version": "U2NETP ONNX / rembg v0.0.0",
+    "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx",
+    "source": "https://github.com/xuebinqin/U-2-Net",
+    "sha256": "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8",
+    "license": "Apache-2.0"
+  }
+}

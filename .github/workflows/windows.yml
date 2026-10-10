@@ -16,3 +16,4 @@ jobs:
       - run: dotnet build windows/S8Cam.Receiver.csproj -c Release
       - run: dotnet run --project tests -c Release -- unit test-results
       - run: dotnet run --project tests -c Release -- usb-probe-stress
+      - run: dotnet build packaging/probe/ToolProbe.csproj -c Release

@@ -4,7 +4,7 @@
 
 **H3H Cam** превращает Android-телефон в управляемую камеру для стримов, видеозвонков и записи. Windows-клиент выбирает модуль камеры и параметры потока; телефон захватывает и аппаратно кодирует видео.
 
-[**Скачать Windows + APK**](https://github.com/H3H-holylord/H3H-Cam/releases/latest) · [Быстрый старт](docs/QUICKSTART.md) · [Сборка](docs/BUILD.md) · [Сообщить о проблеме](https://github.com/H3H-holylord/H3H-Cam/issues)
+[**Скачать полный Portable**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.10/H3H-Cam-4.0.10-Portable.zip) · [Быстрый старт](docs/QUICKSTART.md) · [Сборка](docs/BUILD.md) · [Сообщить о проблеме](https://github.com/H3H-holylord/H3H-Cam/issues)
 
 ## Возможности
 
@@ -23,18 +23,23 @@
 
 | Файл | Назначение |
 |---|---|
-| [Windows x64 ZIP](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.10/H3H-Cam-4.0.10-Windows-x64.zip) | Клиент 4.0.10, .NET runtime включён |
+| [Полный Portable — рекомендуется](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.10/H3H-Cam-4.0.10-Portable.zip) | Windows 4.0.10, .NET, FFmpeg/FFplay, ADB с DLL, виртуальная камера, APK и AI-модель |
 | [Android APK](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.10/H3H-Cam-4.0.4.apk) | Android 4.0.4, Android 8+ |
+| [Облегчённый Windows ZIP](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.10/H3H-Cam-4.0.10-Windows-x64.zip) | Для тех, у кого уже есть FFmpeg/FFplay и ADB; APK и AI-модель отдельно |
 | [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.10/SHA256SUMS.txt) | Проверка скачанных файлов |
 
-Модули виртуальной камеры включены; полная OBS для видеозвонков не требуется. FFmpeg/FFplay, ADB и OBS для стримов устанавливаются отдельно. Клиент ищет их автоматически или принимает указанные пути. AI-эффекты требуют дополнительных совместимых весов; модель не входит в публичный релиз.
+**Новым пользователям: скачайте полный Portable и распакуйте его целиком.** Никаких отдельных установок .NET, FFmpeg, FFplay или ADB и настройки PATH не требуется. Утилиты лежат в `tools`, модель для AI-эффектов — в `models`, APK — рядом с EXE. Пути к инструментам в клиенте оставьте пустыми. Полная OBS для виртуальной камеры и видеозвонков не требуется.
+
+OBS Studio и приложения видеозвонков устанавливаются отдельно. При подключении по USB могут понадобиться драйвер производителя телефона и подтверждение отладки Android; USB Direct требует совместимости Accessory/WinUSB. [Состав и проверка Portable](docs/PORTABLE-4.0.10.md).
 
 ## Начать работу
 
-1. Установите APK и разрешите камеру на телефоне.
-2. Распакуйте Windows ZIP. Установите FFmpeg, для ADB-режимов — Android Platform Tools.
-3. Подключите USB, включите отладку и подтвердите доступ компьютера на телефоне. В клиенте выберите USB → НАЙТИ → СТАРТ.
-4. В OBS добавьте Spout2 Capture с сендером H3HCam. Нужен отдельно установленный плагин Spout2.
+1. Распакуйте весь Portable и запустите `H3HCam Receiver.exe`.
+2. Установите APK из архива на телефон и разрешите камеру. Для установки по кабелю включите отладку USB и запустите `Установить на телефон.cmd`; подтвердите запрос на телефоне.
+3. В клиенте выберите **USB · через ADB → НАЙТИ → СТАРТ**. Для первой настройки используйте один подключённый телефон.
+4. Включите «Виртуальная камера». В OBS добавьте **Устройство захвата видео** и выберите имя камеры из статуса клиента. Discord/Zoom также используют эту камеру.
+
+Дополнительный вывод Spout2 требует отдельного плагина OBS; выберите Spout2 Capture с сендером H3HCam, если он уже установлен.
 
 Подробная инструкция: [docs/QUICKSTART.md](docs/QUICKSTART.md).
 

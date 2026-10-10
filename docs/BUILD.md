@@ -9,7 +9,19 @@ dotnet publish windows/S8Cam.Receiver.csproj -c Release -r win-x64 --self-contai
 dotnet run --project tests -c Release -- unit test-results
 ```
 
-libusb-1.0.dll поставляется отдельно от EXE и может заменяться совместимой сборкой. Модули `windows/native/virtualcam/*.dll` MSBuild копирует в `tools/virtualcam` опубликованного клиента — сохраняйте эту папку при распространении. FFmpeg, ADB и полная OBS устанавливаются отдельно. Для необязательных AI-эффектов поместите совместимую u2netp.onnx в models рядом с EXE.
+libusb-1.0.dll поставляется отдельно от EXE и может заменяться совместимой сборкой. Модули `windows/native/virtualcam/*.dll` MSBuild копирует в `tools/virtualcam` опубликованного клиента — сохраняйте эту папку при распространении. `dotnet publish` создаёт клиент, а полный Portable дополнительно включает FFmpeg/FFplay, ADB с DLL, APK и модель u2netp.onnx. Полная OBS в Portable не входит.
+
+## Полный Portable
+
+Сначала соберите Windows и подписанный Android release через `Build.ps1`. Для воспроизведения официальной комплектации используйте неизменённые пакеты по ссылкам и SHA256 в `packaging/portable-dependencies.json`: FFmpeg 9.0.1 full build, Platform Tools 37.0.1 и u2netp.onnx. Ссылка Google `latest` подвижная: если она уже отдаёт другую версию, проверка хэша остановит упаковку; не заменяйте закреплённые зависимости без проверки.
+
+```powershell
+.\Create-Portable-Package.ps1 -AdbDir C:\deps\platform-tools -FfmpegDir C:\deps\ffmpeg-9.0.1-full_build -ModelPath C:\deps\u2netp.onnx
+```
+
+Без этих параметров упаковщик ищет утилиты на машине сборки, но всё равно проверяет закреплённые хэши, обязательные DLL и upstream notices. Пропущенная DLL или несовместимая версия останавливают сборку. Копируются только выбранные публичные файлы; личные настройки, логи и ключи не нужны. Готовый файл: `dist/H3H-Cam-4.0.10-Portable.zip`.
+
+Проверка Portable: `dotnet publish packaging/probe/ToolProbe.csproj -c Release -r win-x64 --self-contained true -o test-probe`. Скопируйте только `H3HCam Tool Probe.exe` рядом с клиентом в **тестовую** распаковку; запустите его с PATH из одной папки Windows System32 и пустыми настройками. Он использует исходный `ToolPaths.cs` клиента и проверяет, что инструменты найдены внутри `tools`, запускаются, декодируют H.264/HEVC и что присутствуют остальные компоненты. Сам тестовый EXE в релиз не включается.
 
 ## Android
 

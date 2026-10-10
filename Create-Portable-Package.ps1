@@ -1,11 +1,23 @@
 param(
     [string]$DistDir = '',
+    [string]$AdbDir = '',
+    [string]$FfmpegDir = '',
+    [string]$ModelPath = '',
     [switch]$NoZip
 )
 $ErrorActionPreference = 'Stop'
 $s8Root = $PSScriptRoot
 if (-not $DistDir) { $DistDir = Join-Path $s8Root 'dist' }
 $DistDir = [IO.Path]::GetFullPath($DistDir)
+New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
+$dependencyManifest = Get-Content -LiteralPath (Join-Path $s8Root 'packaging\portable-dependencies.json') -Raw | ConvertFrom-Json
+
+function Assert-Dependency([string]$Path, [string]$Hash) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Portable dependency missing: $Path" }
+    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $Hash) {
+        throw "Portable dependency hash mismatch: $Path. Use the versions in packaging/portable-dependencies.json."
+    }
+}
 
 Write-Host "=== Создание автономного Portable-пакета H3H Cam 4.0.10 ===" -ForegroundColor Cyan
 
@@ -120,14 +132,15 @@ Assert-ReleaseApk $apkPath
 # 2. Ищем необходимые утилиты (ADB, FFmpeg, FFplay)
 Write-Host "Поиск внешних утилит (ADB, FFmpeg, FFplay)..." -ForegroundColor Gray
 
-$adbPath = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter "adb.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+$adbPath = if ($AdbDir) { Join-Path $AdbDir 'adb.exe' } else { $null }
+if (-not $adbPath) { $adbPath = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter "adb.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
 if (-not $adbPath) { $adbPath = (Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
 if (-not $adbPath) { $adbPath = (Get-Command adb.exe -ErrorAction SilentlyContinue).Source }
 
-$ffmpegPath = (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue).Source
+$ffmpegPath = if ($FfmpegDir) { Join-Path $FfmpegDir 'bin\ffmpeg.exe' } else { (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue).Source }
 if (-not $ffmpegPath) { $ffmpegPath = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter "ffmpeg.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
 
-$ffplayPath = (Get-Command ffplay.exe -ErrorAction SilentlyContinue).Source
+$ffplayPath = if ($FfmpegDir) { Join-Path $FfmpegDir 'bin\ffplay.exe' } else { (Get-Command ffplay.exe -ErrorAction SilentlyContinue).Source }
 if (-not $ffplayPath) { $ffplayPath = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter "ffplay.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName }
 
 if (-not $adbPath -or -not (Test-Path $adbPath)) { throw "Не найден adb.exe!" }
@@ -135,6 +148,18 @@ if (-not $ffmpegPath -or -not (Test-Path $ffmpegPath)) { throw "Не найде�
 if (-not $ffplayPath -or -not (Test-Path $ffplayPath)) { throw "Не найден ffplay.exe!" }
 
 $adbDir = Split-Path $adbPath -Parent
+$ffmpegRoot = Split-Path (Split-Path $ffmpegPath -Parent) -Parent
+foreach ($entry in $dependencyManifest.adb.files.PSObject.Properties) {
+    Assert-Dependency (Join-Path $adbDir $entry.Name) $entry.Value
+}
+Assert-Dependency $ffmpegPath $dependencyManifest.ffmpeg.files.'ffmpeg.exe'
+Assert-Dependency $ffplayPath $dependencyManifest.ffmpeg.files.'ffplay.exe'
+if ((Split-Path $ffplayPath -Parent) -ne (Split-Path $ffmpegPath -Parent)) { throw 'FFmpeg and FFplay must come from the same upstream package' }
+foreach ($notice in @((Join-Path $adbDir 'NOTICE.txt'), (Join-Path $adbDir 'source.properties'), (Join-Path $ffmpegRoot 'LICENSE'), (Join-Path $ffmpegRoot 'README.txt'))) {
+    if (-not (Test-Path -LiteralPath $notice -PathType Leaf)) { throw "Upstream notice missing: $notice" }
+}
+if (-not $ModelPath) { $ModelPath = Join-Path $s8Root 'windows\models\u2netp.onnx' }
+Assert-Dependency $ModelPath $dependencyManifest.model.sha256
 
 # 3. Формируем папку пакета
 $portableDir = Join-Path $DistDir 'H3H-Cam-4.0.10-Portable'
@@ -158,40 +183,41 @@ Copy-Item -LiteralPath $apkPath -Destination (Join-Path $portableDir 'H3H-Cam-4.
 if (Test-Path (Join-Path $s8Root 'windows\app.ico')) {
     Copy-Item -LiteralPath (Join-Path $s8Root 'windows\app.ico') -Destination (Join-Path $portableDir 'app.ico') -Force
 }
-if (Test-Path (Join-Path $s8Root 'windows\models')) {
-    $portModels = Join-Path $portableDir 'models'
-    New-Item -ItemType Directory -Force -Path $portModels | Out-Null
-    Copy-Item -Path (Join-Path $s8Root 'windows\models\*') -Destination $portModels -Recurse -Force
-}
+$portModels = Join-Path $portableDir 'models'
+New-Item -ItemType Directory -Force -Path $portModels | Out-Null
+Copy-Item -LiteralPath $ModelPath -Destination (Join-Path $portModels 'u2netp.onnx') -Force
 $libusbSrc = Join-Path $s8Root 'windows\native\win-x64\libusb-1.0.dll'
-if (Test-Path $libusbSrc) {
-    Copy-Item -LiteralPath $libusbSrc -Destination (Join-Path $portableDir 'libusb-1.0.dll') -Force
-}
+Copy-Item -LiteralPath $libusbSrc -Destination (Join-Path $portableDir 'libusb-1.0.dll') -Force
 
 # Копируем инструкции и памятку напрямую без перекодирования
 $instructionSrc = Join-Path $s8Root 'INSTRUCTION-RU.md'
 if (Test-Path $instructionSrc) {
     Copy-Item -LiteralPath $instructionSrc -Destination (Join-Path $portableDir 'INSTRUCTION-RU.md') -Force
 }
-$readmeSrc = Join-Path $s8Root 'README.txt'
+$readmeSrc = Join-Path $s8Root 'packaging\PORTABLE-README.txt'
 if (Test-Path $readmeSrc) {
     Copy-Item -LiteralPath $readmeSrc -Destination (Join-Path $portableDir 'README.txt') -Force
 }
 
-foreach ($doc in @('AUDIT-4.0.1.md', 'QUICKSTART-4.0.5.md', 'WIFI-FIX-4.0.2.md', 'PACING-FIX-4.0.3.md', 'LATENCY-FIX-4.0.4.md', 'PRIORITY-4.0.5.md', 'docs/PERFORMANCE.md', 'docs/QUICKSTART.md')) {
-    $documentPath = Join-Path $s8Root $doc
-    if (Test-Path -LiteralPath $documentPath) { Copy-Item -LiteralPath $documentPath -Destination $portableDir }
-}
 Copy-Item -LiteralPath (Join-Path $s8Root 'docs') -Destination (Join-Path $portableDir 'docs') -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $s8Root 'Collect-Diagnostics.ps1') -Destination $portableDir -Force
+foreach ($name in @('LICENSE', 'THIRD_PARTY.md', 'README.md')) {
+    Copy-Item -LiteralPath (Join-Path $s8Root $name) -Destination $portableDir -Force
+}
+Copy-Item -LiteralPath (Join-Path $s8Root 'licenses') -Destination $portableDir -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $ffmpegRoot 'LICENSE') -Destination (Join-Path $portableDir 'licenses\FFmpeg-GPL-3.0.txt') -Force
+Copy-Item -LiteralPath (Join-Path $ffmpegRoot 'README.txt') -Destination (Join-Path $portableDir 'licenses\FFmpeg-Build-9.0.1.txt') -Force
+Copy-Item -LiteralPath (Join-Path $adbDir 'NOTICE.txt') -Destination (Join-Path $portableDir 'licenses\Android-Platform-Tools-NOTICE.txt') -Force
+Copy-Item -LiteralPath (Join-Path $adbDir 'source.properties') -Destination (Join-Path $portableDir 'licenses\Android-Platform-Tools-Version.txt') -Force
+Copy-Item -LiteralPath (Join-Path $s8Root 'packaging\portable-dependencies.json') -Destination (Join-Path $portableDir 'COMPONENTS.json') -Force
+$installerText = [IO.File]::ReadAllText((Join-Path $s8Root 'packaging\Установить на телефон.cmd')) -replace '\r?\n', "`r`n"
+[IO.File]::WriteAllText((Join-Path $portableDir 'Установить на телефон.cmd'), $installerText, [Text.UTF8Encoding]::new($false))
 # Копируем утилиты в tools/
 Write-Host "Копирование утилит в tools/..." -ForegroundColor Gray
 Copy-Item -LiteralPath $adbPath -Destination (Join-Path $toolsDir 'adb.exe') -Force
 foreach ($dll in @('AdbWinApi.dll', 'AdbWinUsbApi.dll', 'libwinpthread-1.dll')) {
     $dllPath = Join-Path $adbDir $dll
-    if (Test-Path $dllPath) {
-        Copy-Item -LiteralPath $dllPath -Destination (Join-Path $toolsDir $dll) -Force
-    }
+    Copy-Item -LiteralPath $dllPath -Destination (Join-Path $toolsDir $dll) -Force
 }
 Copy-Item -LiteralPath $ffmpegPath -Destination (Join-Path $toolsDir 'ffmpeg.exe') -Force
 Copy-Item -LiteralPath $ffplayPath -Destination (Join-Path $toolsDir 'ffplay.exe') -Force
