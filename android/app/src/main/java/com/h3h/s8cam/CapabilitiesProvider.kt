@@ -25,7 +25,7 @@ class CapabilitiesProvider : ContentProvider() {
       fun buildJson(context: android.content.Context): String {
         val cameras = CameraCatalog.list(context)
         return JSONObject()
-            .put("version", 1)
+            .put("version", 2)
             .put("model", Build.MODEL)
             .put("manufacturer", Build.MANUFACTURER)
             .put("sdk", Build.VERSION.SDK_INT)
@@ -40,7 +40,8 @@ class CapabilitiesProvider : ContentProvider() {
                         .put("modes", JSONArray().apply {
                             camera.modes.forEach { mode ->
                                 put(JSONObject().put("width", mode.width).put("height", mode.height)
-                                    .put("fps", JSONArray(mode.fps)))
+                                    .put("fps", JSONArray(mode.fps))
+                                    .put("captureWidth", mode.captureWidth).put("captureHeight", mode.captureHeight))
                             }
                         }))
                 }

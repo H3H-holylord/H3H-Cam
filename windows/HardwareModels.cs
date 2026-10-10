@@ -51,7 +51,11 @@ public sealed class VideoCapability {
     public int Width { get; set; }
     public int Height { get; set; }
     public List<int> Fps { get; set; } = [];
+    public int CaptureWidth { get; set; }
+    public int CaptureHeight { get; set; }
+    [JsonIgnore] public bool Scaled => CaptureWidth > 0 && CaptureHeight > 0 && (CaptureWidth != Width || CaptureHeight != Height);
     [JsonIgnore] public string Key => $"{Width}x{Height}";
-    [JsonIgnore] public string Label => $"{Width} × {Height}";
+    [JsonIgnore] public string Label => $"{Width} × {Height}" +
+        (Scaled ? $" · GPU из {CaptureWidth} × {CaptureHeight}" : "");
     public override string ToString() => Label;
 }

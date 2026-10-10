@@ -875,6 +875,10 @@ internal static class Program {
         Assert(AdbController.ParseBundleValue(bundle, "data") == base64, "Bundle parser");
         var capabilities = PhoneCapabilities.ParseBase64(base64);
         Assert(capabilities.Cameras.Single().Modes.Single().Fps.SequenceEqual([30, 60]), "capability parser");
+        Assert(!capabilities.Cameras.Single().Modes.Single().Scaled, "old APK capabilities stay native");
+        var qhdCapabilities = PhoneCapabilities.ParseJson("""{"version":2,"cameras":[{"key":"0","modes":[{"width":2560,"height":1440,"captureWidth":3840,"captureHeight":2160,"fps":[30]}]}]}""");
+        var qhdMode = qhdCapabilities.Cameras.Single().Modes.Single();
+        Assert(qhdMode.Scaled && qhdMode.Key == "2560x1440" && qhdMode.Label.Contains("3840") && qhdMode.Fps.SequenceEqual([30]), "QHD output, source and FPS stay distinct in desktop capabilities");
         using var powerJson = JsonDocument.Parse("""{"batteryPercent":78,"batteryStatus":"Charging","batterySource":"USB","batteryVoltageMv":4180,"batteryCurrentUa":820000,"batteryPowerMw":3427.6,"batteryTemperatureC":34.2,"batteryChargeCounterUah":2570000,"batteryHealth":"Good"}""");
         var power = PowerTelemetry.From(powerJson.RootElement);
         Assert(power.Percent == 78 && power.VoltageV == 4.18 && power.CurrentMa == 820 && power.PowerW is > 3.42 and < 3.44, "power telemetry units");
@@ -1281,6 +1285,14 @@ internal static class Program {
             await File.WriteAllTextAsync(statusPath,
                 JsonSerializer.Serialize(statuses, new JsonSerializerOptions { WriteIndented = true }));
             await DecodeCheck(outputPath);
+            if (qhd) {
+                using var verify = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var frame = Path.Combine(root, "qhd-frame.nv12");
+                await Processes.Run(ToolPaths.Find("ffmpeg.exe"), [
+                    "-hide_banner", "-loglevel", "error", "-y", "-i", outputPath, "-frames:v", "1", "-pix_fmt", "nv12", "-f", "rawvideo", frame
+                ], verify.Token, 15000);
+                Assert(new FileInfo(frame).Length == 2560L * 1440 * 3 / 2, "QHD stream encodes actual 2560x1440 frames, not a desktop upscale");
+            }
             if (recordingPath != null) {
                 Assert(new FileInfo(recordingPath).Length > 100000, "independent recording receives frames alongside relay");
                 await DecodeCheck(recordingPath);

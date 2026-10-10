@@ -29,6 +29,7 @@ class CameraStreamer(
     private var camera: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var legacy: SamsungLegacyCapture? = null
+    private var scaler: CameraSurfaceScaler? = null
     private var activeCharacteristics: CameraCharacteristics? = null
     private var activeRange: Range<Int>? = null
     private var isHighSpeedSession: Boolean = false
@@ -185,7 +186,7 @@ class CameraStreamer(
                     route.cameraId, route.physicalId, mode.width, mode.height, settings.forceSamsungLegacy)
                 val fpsRange = if (useLegacy) Range(actualFps, actualFps) else selectFpsRange(
                     selectedCharacteristics,
-                    Size(mode.width, mode.height),
+                    Size(mode.captureWidth, mode.captureHeight),
                     actualFps,
                     highSpeed
                 )
@@ -201,6 +202,8 @@ class CameraStreamer(
                         append("Разрешение заменено на ${mode.label}. ")
                     if (actualFps != settings.fps)
                         append("${settings.fps} fps недоступны; выбрано $actualFps fps. ")
+                    if (mode.scaled)
+                        append("Захват ${mode.captureWidth}×${mode.captureHeight} → ${mode.width}×${mode.height} на GPU телефона. ")
                 }
 
                 val e = H264Encoder(
@@ -218,6 +221,12 @@ class CameraStreamer(
                 if (useLegacy) {
                     legacy = SamsungLegacyCapture(handler, onError).also { it.start(e.inputSurface, settings) }
                     return@post
+                }
+
+                if (mode.scaled) {
+                    scaler = CameraSurfaceScaler(handler, onError).also {
+                        it.start(e.inputSurface, mode.captureWidth, mode.captureHeight, mode.width, mode.height)
+                    }
                 }
 
                 manager.openCamera(route.cameraId, object : CameraDevice.StateCallback() {
@@ -280,7 +289,7 @@ class CameraStreamer(
         fpsRange: Range<Int>,
         highSpeed: Boolean
     ) {
-        val surface = encoder?.inputSurface ?: error("Кодек не запущен")
+        val surface = scaler?.cameraSurface ?: encoder?.inputSurface ?: error("Кодек не запущен")
         val callback = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(configured: CameraCaptureSession) {
                 if (stopped) { configured.close(); return }
@@ -381,7 +390,7 @@ class CameraStreamer(
         highSpeed: Boolean,
         s: StreamSettings
     ): CaptureRequest.Builder {
-        val surface = encoder?.inputSurface ?: error("Кодек не запущен")
+        val surface = scaler?.cameraSurface ?: encoder?.inputSurface ?: error("Кодек не запущен")
         val request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             addTarget(surface)
             set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
@@ -663,6 +672,8 @@ class CameraStreamer(
                 camera?.close()
                 legacy?.close()
                 legacy = null
+                scaler?.close()
+                scaler = null
                 encoder?.stop()
                 encoder = null
             } finally {

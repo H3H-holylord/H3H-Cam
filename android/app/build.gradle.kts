@@ -14,8 +14,8 @@ android {
         applicationId = "com.h3h.s8cam"
         minSdk = 26
         targetSdk = 37
-        versionCode = 17
-        versionName = "4.0.4"
+        versionCode = 18
+        versionName = "4.0.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -46,6 +46,8 @@ android {
             isDebuggable = true
         }
     }
+    // Opt in to testing the signed release without replacing it with a debug APK.
+    if (providers.gradleProperty("testRelease").orNull == "true") testBuildType = "release"
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11

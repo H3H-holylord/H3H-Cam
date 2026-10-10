@@ -13,11 +13,14 @@ data class VideoMode(
     val width: Int,
     val height: Int,
     val fps: List<Int>,
-    val highSpeedFps: List<Int> = emptyList()
+    val highSpeedFps: List<Int> = emptyList(),
+    val captureWidth: Int = width,
+    val captureHeight: Int = height
 ) {
     val key get() = "${width}x${height}"
     val label get() = "${width} × ${height}"
     fun isHighSpeed(value: Int) = value in highSpeedFps
+    val scaled get() = captureWidth != width || captureHeight != height
 }
 
 data class CameraRoute(
@@ -74,7 +77,7 @@ object CameraCatalog {
         val ownSizes = outputSizes(characteristics)
         val logicalSizes = outputSizes(logicalCharacteristics).toSet()
         val sizes = ownSizes.filter { it in logicalSizes }.ifEmpty { outputSizes(logicalCharacteristics) }
-        val modes = sizes
+        val nativeModes = sizes
             .filter { it.width >= 640 && it.height >= 360 && it.width <= 4096 && it.height <= 2160 }
             .mapNotNull { size ->
                 val (regular, highSpeed) = supportedFps(characteristics, size, physicalId == null)
@@ -83,6 +86,16 @@ object CameraCatalog {
                 val fps = (regular + highSpeed + samsung).distinct().sorted()
                 if (fps.isEmpty()) null else VideoMode(size.width, size.height, fps, highSpeed)
             }
+        // The encoder's Surface cannot request an unadvertised Camera2 size. When QHD
+        // is absent, capture a real larger SurfaceTexture mode and downscale on the GPU.
+        val logicalTextureSizes = textureSizes(logicalCharacteristics).toSet()
+        val textureModes = textureSizes(characteristics).filter { it in logicalTextureSizes }
+            .filter { it.width >= 2560 && it.height >= 1440 && it.width <= 4096 && it.height <= 2304 }
+            .map { size ->
+                val (fps, _) = supportedFps(characteristics, size, false, Size(2560, 1440), true)
+                VideoMode(size.width, size.height, fps)
+            }
+        val modes = QhdModePlanner.add(nativeModes, textureModes) { fps -> H264Encoder.supports(2560, 1440, fps) }
             .sortedWith(compareByDescending<VideoMode> { it.width.toLong() * it.height }
                 .thenByDescending { abs(it.width.toDouble() / it.height - 16.0 / 9.0) < 0.02 })
             .distinctBy { it.key }
@@ -115,38 +128,50 @@ object CameraCatalog {
         return result.distinct()
     }
 
+    private fun textureSizes(c: CameraCharacteristics): List<Size> = try {
+        c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?.getOutputSizes(SurfaceTexture::class.java)?.toList().orEmpty()
+    } catch (_: Exception) { emptyList() }
+
     private fun supportedFps(
         c: CameraCharacteristics,
         size: Size,
-        allowHighSpeed: Boolean
+        allowHighSpeed: Boolean,
+        encodedSize: Size = size,
+        textureOnly: Boolean = false
     ): Pair<List<Int>, List<Int>> {
         val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: return emptyList<Int>() to emptyList()
-        val duration = sequenceOf(
+        val durations = sequenceOf(
             try { map.getOutputMinFrameDuration(SurfaceTexture::class.java, size) } catch (_: Exception) { 0L },
             try { map.getOutputMinFrameDuration(MediaCodec::class.java, size) } catch (_: Exception) { 0L },
             try { map.getOutputMinFrameDuration(android.media.MediaRecorder::class.java, size) } catch (_: Exception) { 0L },
             try { map.getOutputMinFrameDuration(android.graphics.ImageFormat.PRIVATE, size) } catch (_: Exception) { 0L }
-        ).filter { it > 0L }.minOrNull() ?: 0L
+        )
+        val duration = (if (textureOnly) durations.take(1) else durations).filter { it > 0L }.minOrNull() ?: 0L
 
         val ranges = c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty()
         val maxSensorFps = ranges.maxOfOrNull { it.upper } ?: 30
-        val durationLimit = if (duration > 0) (1_000_000_000L / duration).toInt() else maxSensorFps
+        // No measured per-size duration: advertise a conservative 30 FPS for scaled
+        // modes, rather than copying a sensor-wide 60 FPS range onto a 4K stream.
+        val durationLimit = if (duration > 0) (1_000_000_000L / duration).toInt()
+            else if (textureOnly) minOf(maxSensorFps, 30) else maxSensorFps
 
         val regular = commonFps.filter { fps ->
             fps <= durationLimit + 1 && ranges.any { (fps in it.lower..it.upper) || (it.upper >= fps) } &&
-                H264Encoder.supports(size.width, size.height, fps)
+                H264Encoder.supports(encodedSize.width, encodedSize.height, fps)
         }.toMutableList()
         if (regular.isEmpty()) {
             ranges.map { it.upper }.filter { it in 10..60 && it <= durationLimit + 1 }
                 .distinct().sorted()
-                .filter { H264Encoder.supports(size.width, size.height, it) }
+                .filter { H264Encoder.supports(encodedSize.width, encodedSize.height, it) }
                 .forEach { regular += it }
         }
-        if (regular.isEmpty() && H264Encoder.supports(size.width, size.height, 30)) {
+        if (!textureOnly && regular.isEmpty() && H264Encoder.supports(size.width, size.height, 30)) {
             regular += 30
         }
-        if (maxSensorFps >= 60 && 60 !in regular && H264Encoder.supports(size.width, size.height, 60)) {
+        if (!textureOnly && !(size.width == 2560 && size.height == 1440) &&
+            maxSensorFps >= 60 && 60 !in regular && H264Encoder.supports(size.width, size.height, 60)) {
             regular += 60
         }
         val highSpeed = if (allowHighSpeed && Build.VERSION.SDK_INT >= 23) {

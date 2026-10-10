@@ -19,7 +19,7 @@ libusb-1.0.dll поставляется отдельно от EXE и может 
 .\Create-Portable-Package.ps1 -AdbDir C:\deps\platform-tools -FfmpegDir C:\deps\ffmpeg-9.0.1-full_build -ModelPath C:\deps\u2netp.onnx
 ```
 
-Без этих параметров упаковщик ищет утилиты на машине сборки, но всё равно проверяет закреплённые хэши, обязательные DLL и upstream notices. Пропущенная DLL или несовместимая версия останавливают сборку. Копируются только выбранные публичные файлы; личные настройки, логи и ключи не нужны. Готовый файл: `dist/H3H-Cam-4.0.10-Portable.zip`.
+Без этих параметров упаковщик ищет утилиты на машине сборки, но всё равно проверяет закреплённые хэши, обязательные DLL и upstream notices. Пропущенная DLL или несовместимая версия останавливают сборку. Копируются только выбранные публичные файлы; личные настройки, логи и ключи не нужны. Готовый файл: `dist/H3H-Cam-4.0.11-Portable.zip`.
 
 Проверка Portable: `dotnet publish packaging/probe/ToolProbe.csproj -c Release -r win-x64 --self-contained true -o test-probe`. Скопируйте только `H3HCam Tool Probe.exe` рядом с клиентом в **тестовую** распаковку; запустите его с PATH из одной папки Windows System32 и пустыми настройками. Он использует исходный `ToolPaths.cs` клиента и проверяет, что инструменты найдены внутри `tools`, запускаются, декодируют H.264/HEVC и что присутствуют остальные компоненты. Сам тестовый EXE в релиз не включается.
 
@@ -45,7 +45,7 @@ cd android
 
 ## Публикация
 
-Исходники — в main, бинарники — в Releases. Не коммитьте ключи, signing.properties, local.properties, AppData-настройки и личные логи. Локальный Create-Portable-Package.ps1 предназначен для личной полной сборки; публичный ZIP не включает FFmpeg/ADB/OBS и веса AI.
+Исходники — в main, бинарники — в Releases. Не коммитьте ключи, signing.properties, local.properties, AppData-настройки и личные логи. Публичный Portable создаётся Create-Portable-Package.ps1 и включает закреплённые FFmpeg/FFplay, ADB, модули виртуальной камеры и модель u2netp. Лицензии и upstream notices входят в ZIP; соответствующие исходники FFmpeg и остальных сторонних компонентов прикладываются к релизу. Полная OBS устанавливается отдельно.
 
 Проверки производительности и аппаратного предпросмотра описаны в [PERFORMANCE.md](PERFORMANCE.md), нагрузочные проверки — в [GAME-LOAD.md](GAME-LOAD.md).
 
@@ -54,3 +54,5 @@ cd android
 Исправление времени жизни USB-устройств и тесты запуска EXE: [STARTUP-CRASH-4.0.9.md](STARTUP-CRASH-4.0.9.md).
 
 Установка виртуальной камеры и тест DirectShow-потребителя: [VIRTUAL-CAMERA-4.0.10.md](VIRTUAL-CAMERA-4.0.10.md). `dotnet run --project tests -c Release -- virtualcam-capture <путь-к-ffmpeg.exe> test-results/virtualcam` использует рабочую регистрацию камеры и требует остановить другие её производители. Обычные unit tests используют отдельные приватные ветки реестра.
+
+QHD и GPU-путь: [QHD-4.0.11.md](QHD-4.0.11.md). Для инструментального теста подписанного APK выполните `gradlew.bat :app:assembleReleaseAndroidTest -PtestRelease=true`, установите release APK и `app/build/outputs/apk/androidTest/release/app-release-androidTest.apk` с одинаковой подписью, затем `adb shell am instrument -w -e class com.h3h.s8cam.CameraSurfaceScalerTest com.h3h.s8cam.test/androidx.test.runner.AndroidJUnitRunner`. Нужен свободный телефон с разрешением камеры. Тестовый APK не входит в Portable.
