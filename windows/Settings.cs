@@ -219,8 +219,10 @@ public sealed class Settings {
         QualityProfile = source.QualityProfile;
     }
 
-    public static string DataDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "H3HCam");
+    private static string? DataDirOverride => Environment.GetEnvironmentVariable("H3HCAM_DATA_DIR");
+    public static string DataDir => string.IsNullOrWhiteSpace(DataDirOverride)
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "H3HCam")
+        : Path.GetFullPath(DataDirOverride);
     public static string FilePath => Path.Combine(DataDir, "settings.json");
 
     public static string LegacyDataDir => Path.Combine(
@@ -229,7 +231,7 @@ public sealed class Settings {
 
     public static Settings Load(string? filePath = null) {
         var path = filePath ?? FilePath;
-        if (filePath == null && !File.Exists(path) && File.Exists(LegacyFilePath)) {
+        if (filePath == null && string.IsNullOrWhiteSpace(DataDirOverride) && !File.Exists(path) && File.Exists(LegacyFilePath)) {
             try {
                 Directory.CreateDirectory(DataDir);
                 File.Copy(LegacyFilePath, FilePath, true);

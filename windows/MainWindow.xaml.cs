@@ -24,6 +24,7 @@ public partial class MainWindow : Window {
     }
 
     private Settings settings;
+    private readonly bool safeMode=Environment.GetCommandLineArgs().Contains("--safe-mode");
     private ReceiverEngine? engine;
     private PhoneCapabilities? capabilities;
     private bool busy, closing, closed, filling, forceExit, customPresetsFilling;
@@ -100,7 +101,7 @@ public partial class MainWindow : Window {
                 QueueSave();
             }
         });
-        wifiDiscovery.Start();
+        if(!safeMode)wifiDiscovery.Start();
         LivePreviewImage.SizeChanged += (_, _) => { if (gridEnabled) RedrawGrid(); };
         SettingsPanel.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => QueueSave()));
         SettingsPanel.AddHandler(ComboBox.SelectionChangedEvent, new SelectionChangedEventHandler((_, _) => QueueSave()));
@@ -215,6 +216,7 @@ public partial class MainWindow : Window {
             }));
 
         usbWatcherTimer.Tick += async (_, _) => {
+            if (safeMode) return;
             if (busy || closing || closed || engine?.Running == true) return;
             if (AutoStartOnUsb.IsChecked != true) return;
             try {
@@ -233,8 +235,10 @@ public partial class MainWindow : Window {
                 WindowState = WindowState.Minimized;
                 Hide();
             }
-            if (settings.AutoStart) await Start();
-            else await Scan(showErrors: false);
+            if (safeMode) {
+                Log("Безопасный запуск: автоматический поиск и запуск потока отключены на эту сессию.");
+            } else if (settings.AutoStart) await Start();
+            else await Scan(showErrors: false,allowUsbSwitch:false);
         };
         Log("Настройки: " + Settings.FilePath);
     }
@@ -798,7 +802,7 @@ public partial class MainWindow : Window {
         } catch (Exception ex) { Log("Ошибка копирования ошибок: " + ex.Message); }
     }
 
-    private async Task Scan(bool showErrors = true) {
+    private async Task Scan(bool showErrors = true,bool allowUsbSwitch=true) {
         if (busy || engine?.Running == true) return;
         busy = true;
         Buttons();
@@ -807,7 +811,7 @@ public partial class MainWindow : Window {
             var next = Read();
             if (next.Transport == "direct") {
                 using var direct = new AoaController();
-                var result = await direct.ConnectAsync(operation.Token);
+                var result = await direct.ConnectAsync(operation.Token,allowSwitch:allowUsbSwitch);
                 Log(result.Status);
                 if (!result.Ready) throw new IOException(result.Status);
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(operation.Token);

@@ -12,8 +12,7 @@ public enum LogLevel {
 }
 
 public sealed class RollingLogger : IDisposable {
-    public static string LogDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "H3HCam", "logs");
+    public static string LogDir => Path.Combine(Settings.DataDir,"logs");
 
     private readonly ConcurrentQueue<string> recentErrors = new();
     private readonly object writeLock = new();

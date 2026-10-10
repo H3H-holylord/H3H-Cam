@@ -17,6 +17,15 @@ public partial class App : Application {
         AppDomain.CurrentDomain.UnhandledException += (s, args) => {
             Logger.Log($"Domain Unhandled Exception: {args.ExceptionObject}", LogLevel.Error);
         };
+        TaskScheduler.UnobservedTaskException += (_,args) => {
+            Logger.Log($"Background task exception: {args.Exception}",LogLevel.Error);
+            args.SetObserved();
+        };
+        Logger.Log($"Startup {typeof(App).Assembly.GetName().Version}; " +
+            $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription}; " +
+            $"{System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}; " +
+            $"{System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}; " +
+            $"safeMode={e.Args.Contains("--safe-mode")}");
     }
 
     protected override void OnExit(ExitEventArgs e) {

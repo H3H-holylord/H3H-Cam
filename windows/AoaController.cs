@@ -23,7 +23,7 @@ public sealed class AoaController : IDisposable {
     public async Task<AoaProbeResult> ConnectAsync(CancellationToken ct, bool allowSwitch = true) {
         ct.ThrowIfCancellationRequested();
         if (!NativeLibrary.TryLoad("libusb-1.0.dll", out var native))
-            return new(false, false, "USB Direct недоступен: компонент libusb-1.0.dll не найден. Переустановите H3H Cam 4.0 или используйте USB · ADB.");
+            return new(false, false, "USB Direct недоступен: не удалось загрузить libusb-1.0.dll. Распакуйте Windows ZIP целиком или используйте USB · ADB.");
         NativeLibrary.Free(native);
         try {
             if (context == null) {
@@ -34,23 +34,29 @@ public sealed class AoaController : IDisposable {
         catch (Exception ex) {
             return new(false, false, "Не удалось запустить USB Direct: " + ex.Message);
         }
-        var current = context.List().FirstOrDefault(IsAccessory);
+        // Find returns an owned clone and disposes the enumeration while its native
+        // context is alive. Letting enumerated devices reach GC after libusb_exit
+        // causes an uncatchable AccessViolation in libusb_unref_device.
+        var current = context.Find(IsAccessory);
         if (current == null) {
             if (!allowSwitch) return new(false, false, "Активный USB Direct не обнаружен; проверяем ADB и Wi-Fi.");
             var switched = false;
-            foreach (var candidate in context.List()) {
-                ct.ThrowIfCancellationRequested();
-                try { if (TryStartAccessory(candidate)) { switched = true; break; } }
-                catch { candidate.Close(); }
+            using (var candidates=context.List()) {
+                foreach (var candidate in candidates) {
+                    ct.ThrowIfCancellationRequested();
+                    try { if (TryStartAccessory(candidate)) { switched = true; break; } }
+                    catch { candidate.Close(); }
+                }
             }
             if (!switched)
                 return new(false, false, "Телефон найден Windows, но USB-интерфейс недоступен приложению. Для USB Direct нужен драйвер WinUSB для интерфейса H3H Cam (назначается через Zadig или диспетчер устройств); ADB-режим продолжает работать без изменения драйверов.");
             for (var i = 0; i < 30 && current == null; i++) {
                 await Task.Delay(200, ct);
-                current = context.List().FirstOrDefault(IsAccessory);
+                current = context.Find(IsAccessory);
             }
         }
         if (current == null) return new(false, false, "Телефон не перешёл в Android Accessory mode");
+        bool connected=false;
         try {
             current.Open();
             current.ClaimInterface(0);
@@ -58,12 +64,16 @@ public sealed class AoaController : IDisposable {
             writer = current.OpenEndpointWriter(WriteEndpointID.Ep01);
             readerStream = new UsbReaderStream(reader);
             device = current;
+            connected=true;
             return new(true, true, "USB Direct подключён", current.VendorId, current.ProductId);
         } catch (Exception ex) {
+            reader=null;
+            writer=null;
+            readerStream?.Dispose();readerStream=null;
             current.Close();
             return new(false, true, "Accessory mode виден, но WinUSB не открыл интерфейс: " + ex.Message,
                 current.VendorId, current.ProductId);
-        }
+        } finally {if(!connected)current.Dispose();}
     }
 
     private readonly byte[] headerBuffer = new byte[H3HProtocol.HeaderSize];
@@ -116,6 +126,7 @@ public sealed class AoaController : IDisposable {
         writer = null;
         try { device?.ReleaseInterface(0); } catch { }
         try { device?.Close(); } catch { }
+        try { device?.Dispose(); } catch { }
         device = null;
         if (context != null) {
             try { GC.SuppressFinalize(context); } catch { }

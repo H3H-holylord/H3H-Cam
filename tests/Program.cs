@@ -191,6 +191,18 @@ internal static class Program {
         if (args.Length == 0) throw new ArgumentException(
             "Commands: unit [folder] | probe <auto|usb|wifi> [serial] | stream <usb|wifi> <folder> [serial] [seconds]");
         switch (args[0]) {
+            case "startup-smoke":
+                await StartupSmokeTests.Run(args[1],args[2]);return;
+            case "usb-probe-stress":
+                for(int round=0;round<30;round++) {
+                    using(var probe=new AoaController()) {
+                        using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                        var result=await probe.ConnectAsync(timeout.Token,allowSwitch:false);
+                        Console.WriteLine($"USB probe {round}: ready={result.Ready}");
+                    }
+                    GC.Collect();GC.WaitForPendingFinalizers();GC.Collect();
+                }
+                Console.WriteLine("PASS USB probe/dispose/GC stress");return;
             case "gpu-video-test":
                 await GpuVideoTests.Run(args[1]);return;
             case "gpu-queue-test":
