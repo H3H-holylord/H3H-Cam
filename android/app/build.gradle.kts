@@ -14,8 +14,8 @@ android {
         applicationId = "com.h3h.s8cam"
         minSdk = 26
         targetSdk = 37
-        versionCode = 19
-        versionName = "4.0.6"
+        versionCode = 20
+        versionName = "4.0.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -56,6 +56,7 @@ android {
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.8.0")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.core:core-ktx:1.10.1")

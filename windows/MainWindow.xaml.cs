@@ -52,6 +52,7 @@ public partial class MainWindow : Window {
     private byte[]? processedPreviewBuffer;
     private byte[]? overlayBuffer;
     private WifiDiscoveryService? wifiDiscovery;
+    private bool lastScanSucceeded;
     private volatile bool previewRenderingVisible;
     private TaskCompletionSource? requestedSnapshotFrame;
     private void UpdatePreviewActivity() {
@@ -97,6 +98,7 @@ public partial class MainWindow : Window {
         UpdateModeUI();
         UpdateVirtualCamStatus();
         wifiDiscovery = new WifiDiscoveryService(() => Volatile.Read(ref settings).Clone(), Log);
+        wifiDiscovery.PairedTelemetry = (ip, telemetry) => engine?.AcceptWifiTelemetry(ip, telemetry);
         wifiDiscovery.PhoneDiscovered += phone => Dispatcher.BeginInvoke(() => {
             if (closing || closed) return;
             Log(L.Format("s_0c10be76de5c", phone.Model, phone.Ip));
@@ -105,7 +107,27 @@ public partial class MainWindow : Window {
                 QueueSave();
             }
         });
+        wifiDiscovery.PairRequested = request => Dispatcher.InvokeAsync(async () => {
+            if (closing || closed || busy || engine?.Running == true) throw new InvalidOperationException(L.Get("setup_pc_busy"));
+            filling = true;
+            try {
+                Transport.SelectedIndex = 1;
+                PhoneIp.Text = request.Ip;
+                settings.PhoneIp = request.Ip;
+                PcIp.Text = WifiDiscoveryService.ResolveBestLocalIpv4(System.Net.IPAddress.Parse(request.Ip));
+                settings.WifiPairSession = request.Token;
+                ApplyCapabilities(request.Capabilities, settings.CameraKey, settings.Width, settings.Height, settings.Fps);
+                DeviceHint.Text = L.Get("setup_wifi_paired");
+                BasicDeviceNameText.Text = request.Capabilities.Model;
+                BasicCameraSettings.Visibility = Visibility.Visible;
+            } finally { filling = false; }
+            await Start();
+            if (engine?.Running != true) throw new IOException(StateText.Text);
+            return settings.Clone();
+        }).Task.Unwrap();
         if(!safeMode)wifiDiscovery.Start();
+        Transport.SelectionChanged += (_, _) => { if (!filling) UpdateConnectionHelp(); };
+        UpdateConnectionHelp();
         LivePreviewImage.SizeChanged += (_, _) => { if (gridEnabled) RedrawGrid(); };
         SettingsPanel.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => QueueSave()));
         SettingsPanel.AddHandler(ComboBox.SelectionChangedEvent, new SelectionChangedEventHandler((_, _) => QueueSave()));
@@ -505,6 +527,7 @@ public partial class MainWindow : Window {
         return new Settings {
             Language = LanguageChoice.SelectedIndex switch { 1 => "ru", 2 => "en", _ => "auto" },
             Transport = TransportValue(Transport.SelectedIndex),
+            WifiPairSession = Transport.SelectedIndex == 1 && PhoneIp.Text.Trim() == settings.PhoneIp ? settings.WifiPairSession : "",
             PhoneIp = PhoneIp.Text.Trim(),
             PcIp = PcIp.Text.Trim(),
             AutoPcIp = AutoPcIp.IsChecked == true,
@@ -699,6 +722,7 @@ public partial class MainWindow : Window {
             L.Configure(settings.Language);
             if (Application.Current != null) foreach (Window window in Application.Current.Windows) L.RefreshWindow(window);
             UpdateModeUI();
+            UpdateConnectionHelp();
             Buttons();
             UpdateVirtualCamStatus();
             Read().Save();
@@ -793,6 +817,7 @@ public partial class MainWindow : Window {
 
     private async void BasicStart_Click(object sender, RoutedEventArgs e) {
         if (engine?.Running == true) Stop_Click(this, new RoutedEventArgs());
+        else if (BasicCameraSettings.Visibility != Visibility.Visible || (Transport.SelectedIndex == 1 && settings.WifiPairSession.Length == 0)) QuickConnect_Click(sender, e);
         else await Start();
     }
 
@@ -825,12 +850,25 @@ public partial class MainWindow : Window {
     }
 
     private async Task Scan(bool showErrors = true,bool allowUsbSwitch=true) {
+        lastScanSucceeded = false;
         if (busy || engine?.Running == true) return;
         busy = true;
         Buttons();
         operation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         try {
             var next = Read();
+            if (next.Transport == "wifi" && next.WifiPairSession.Length > 0) {
+                DeviceHint.Text = L.Get("setup_wifi_paired");
+                lastScanSucceeded = true;
+                return;
+            }
+            if (next.Transport == "auto") {
+                // Read-only AOA probe first; never switch a phone away from a working ADB driver.
+                using var probe = new AoaController();
+                var detected = await probe.ConnectAsync(operation.Token, allowSwitch: false);
+                Log(detected.Status);
+                if (detected.Ready) next.Transport = "direct";
+            }
             if (next.Transport == "direct") {
                 using var direct = new AoaController();
                 var result = await direct.ConnectAsync(operation.Token,allowSwitch:allowUsbSwitch);
@@ -848,6 +886,8 @@ public partial class MainWindow : Window {
                 settings = next;
                 ApplyCapabilities(directPhone, settings.CameraKey, settings.Width, settings.Height, settings.Fps);
                 settings.Save();
+                BasicCameraSettings.Visibility = Visibility.Visible;
+                lastScanSucceeded = true;
                 DeviceHint.Text = L.Format("s_e763f9bf6fd9", directPhone.Manufacturer, directPhone.Model);
                 ConnectionLabel.Text = "●  " + directPhone.Model;
                 StateText.Text = L.Format("s_ecfb2b6a1513", directPhone.Cameras.Count);
@@ -862,6 +902,8 @@ public partial class MainWindow : Window {
             UpdateDevices(controller.Devices, controller.Serial);
             ApplyCapabilities(phone, settings.CameraKey, settings.Width, settings.Height, settings.Fps);
             settings.Save();
+            BasicCameraSettings.Visibility = Visibility.Visible;
+            lastScanSucceeded = true;
             DeviceHint.Text = L.Format("s_5ad16b250cba", controller.Device?.Display ?? controller.Serial, controller.EffectiveTransport.ToUpperInvariant());
             ConnectionLabel.Text = "●  " + (controller.Device?.Model.Replace('_', ' ') ?? controller.Serial);
             StateText.Text = L.Format("s_501a0c9993b4", phone.Cameras.Count);
@@ -903,6 +945,7 @@ public partial class MainWindow : Window {
         operation = new();
         try {
             var next = Read();
+            if (restart && engine != null && next.WifiPairSession.Length > 0) engine.KeepPairedPhoneForRestart = true;
             if (engine != null) {
                 await engine.DisposeAsync();
                 engine = null;
@@ -910,6 +953,10 @@ public partial class MainWindow : Window {
             settings = next;
             settings.Save();
             engine = new ReceiverEngine(settings, Log);
+            if (settings.WifiPairSession.Length > 0) {
+                var session = settings.WifiPairSession;
+                engine.StopPairedPhone = () => wifiDiscovery?.StopPairedAsync(session) ?? Task.CompletedTask;
+            }
             UpdatePreviewActivity();
             engine.Status += status => Dispatcher.BeginInvoke(() => ShowStatus(status));
             engine.PreviewFrame += (buf, w, h) => {
@@ -1151,6 +1198,8 @@ public partial class MainWindow : Window {
         Buttons();
         try {
             if (engine != null) await engine.Stop();
+            settings.WifiPairSession = "";
+            UpdateConnectionHelp();
             StateText.Text = L.Get("s_3028fa0907c0");
             ConnectionLabel.Text = L.Get("s_b37981243396");
             if (BasicDeviceNameText != null) {
@@ -1587,20 +1636,40 @@ public partial class MainWindow : Window {
             await Start(restart: true);
     }
 
+    private void UpdateConnectionHelp() {
+        if (ConnectionHelpText == null || Transport == null) return;
+        ConnectionHelpText.Text = L.Get(Transport.SelectedIndex switch {
+            1 => "setup_wifi_steps", 3 => "setup_direct_steps", _ => "setup_usb_steps"
+        });
+        if (!busy && engine?.Running != true) DeviceHint.Text = L.Get("s_befdd34ad631");
+    }
+
+    private void ConnectionGuide_Click(object sender, RoutedEventArgs e) {
+        MessageBox.Show(L.Get("setup_guide_body"), L.Get("setup_guide_title"), MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private async void QuickConnect_Click(object sender, RoutedEventArgs e) {
+        if (Transport.SelectedIndex == 1 && settings.WifiPairSession.Length == 0) ShowQr_Click(sender, e);
+        else { await Scan(); if (lastScanSucceeded) await Start(); }
+    }
+
     private void ShowQr_Click(object sender, RoutedEventArgs e) {
         try {
             var current = Read();
+            if (busy || engine?.Running == true) { StateText.Text = L.Get("setup_pc_busy"); return; }
+            wifiDiscovery?.Start();
+            var ticket = wifiDiscovery?.OpenPairing() ?? throw new IOException(L.Get("setup_wifi_unavailable"));
             var pcIp = current.PcIp;
-            if (string.IsNullOrWhiteSpace(pcIp) || pcIp == "127.0.0.1") {
-                pcIp = AdbController.FindLocalIpv4();
+            if (current.AutoPcIp || string.IsNullOrWhiteSpace(pcIp) || pcIp == "127.0.0.1") {
+                pcIp = WifiDiscoveryService.ResolveBestLocalIpv4();
             }
-            var connectUri = $"h3hcam://wifi?pc={pcIp}&port={current.RtpPort}&fps={current.Fps}&codec={current.Codec}";
+            var connectUri = $"h3hcam://wifi?pc={pcIp}&token={ticket.Token}";
             var qrBmp = QrCodeGenerator.GenerateBitmap(connectUri, scale: 9, border: 4);
 
             var qrWin = new Window {
                 Title = L.Get("s_b4ae5af1d571"),
                 Width = 420,
-                Height = 520,
+                Height = 600,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
                 Background = new SolidColorBrush(Color.FromRgb(12, 20, 33)),
@@ -1631,13 +1700,19 @@ public partial class MainWindow : Window {
             root.Children.Add(img);
 
             var statusBlock = new TextBlock {
-                Text = L.Get("s_d975b52d3ec7"),
+                Text = L.Get("setup_qr_hint"),
+                TextWrapping = TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(Color.FromRgb(112, 229, 195)),
                 FontSize = 12,
                 HorizontalAlignment = HorizontalAlignment.Center
             };
             root.Children.Add(statusBlock);
             qrWin.Content = root;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            timer.Tick += (_, _) => { if (engine?.Running == true && settings.WifiPairSession == ticket.Token) qrWin.Close(); };
+            qrWin.Closed += (_, _) => timer.Stop();
+            timer.Start();
+            // Keep the invitation briefly after close so an in-flight phone request can finish.
             qrWin.ShowDialog();
         } catch (Exception ex) { Log("QR Wi-Fi: " + ex.Message); }
     }
@@ -2740,8 +2815,6 @@ public partial class MainWindow : Window {
         usbWatcherTimer.Stop();
         IsEnabled = false;
         saveTimer.Stop();
-        wifiDiscovery?.Dispose();
-        wifiDiscovery = null;
         operation?.Cancel();
         try {
             if (!busy) {
@@ -2757,6 +2830,8 @@ public partial class MainWindow : Window {
             if (engine != null) await engine.DisposeAsync();
         } catch (Exception ex) { Log(L.Get("s_eafe0608cdef") + ex.Message); }
         finally {
+            wifiDiscovery?.Dispose();
+            wifiDiscovery = null;
             logTimer.Stop();
             closed = true;
             Closing -= OnClosing;

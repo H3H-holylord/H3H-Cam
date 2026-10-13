@@ -43,4 +43,12 @@
     <string name="state_usb_disconnected">USB Direct отключён</string>
     <string name="state_usb_reconfigured">USB Direct · камера переконфигурирована</string>
     <string name="state_reconnecting">Переподключение:</string>
+    <string name="scan_qr">СКАНИРОВАТЬ QR (WI-FI)</string>
+    <string name="scan_prompt">Наведите камеру на QR-код в Windows-клиенте H3H Cam</string>
+    <string name="connection_help">КАК ПОДКЛЮЧИТЬ</string>
+    <string name="connection_steps">Wi-Fi без отладки: телефон и ПК должны быть в одной сети. В Windows нажмите «Wi-Fi: показать QR-код», здесь — «Сканировать QR». Подтвердите СТАРТ; настройки передаст компьютер.\n\nUSB через ADB: подключите кабель с передачей данных, включите отладку USB и подтвердите ключ компьютера. В Windows нажмите «Подключить и запустить».\n\nUSB Direct требует совместимости Android Accessory и драйвера WinUSB на ПК.\n\nДля обычной веб-камеры выберите 16:9 Горизонт в Windows. Экран можно выключить кнопкой питания.</string>
+    <string name="pair_stop_first">Сначала остановите поток или дождитесь подключения</string>
+    <string name="qr_invalid">Это не действующий QR H3H Cam. Обновите Windows-клиент и покажите новый код.</string>
+    <string name="qr_confirm">Подключить камеру к компьютеру %1$s? Настройки будут заданы в Windows. Отладка USB не нужна.</string>
+    <string name="wifi_use_qr">Компьютер %1$s найден. Для подключения покажите QR-код в Windows и нажмите «Сканировать QR» здесь.</string>
 </resources>

@@ -17,7 +17,8 @@ class RtpH264Sender(
     codec: String = "h264",
     private val requestKeyframe: () -> Unit,
     private val changeBitrate: (Int) -> Boolean,
-    private val onCommand: ((JSONObject) -> Unit)? = null
+    private val onCommand: ((JSONObject) -> Unit)? = null,
+    private val session: String = ""
 ) : QueuedSender(requestKeyframe, codec = codec) {
     constructor(
         ip: String,
@@ -44,6 +45,7 @@ class RtpH264Sender(
         reuseAddress = true
         bind(InetSocketAddress(port + 1))
         receiveBufferSize = 64 * 1024
+        soTimeout = 1000
     }
     private val controlThread = thread(name = "S8CamRtpControl") { controlLoop() }
     private val packetizer = RtpPacketizer({ bytes ->
@@ -73,11 +75,21 @@ class RtpH264Sender(
 
     private fun controlLoop() {
         val buffer = ByteArray(16 * 1024)
+        var helloAt = 0L
+        var revision = ""
         while (running) try {
+            if (session.isNotEmpty() && android.os.SystemClock.elapsedRealtime() - helloAt >= 1000) {
+                helloAt = android.os.SystemClock.elapsedRealtime()
+                val hello = ("H3HCAM_CONTROL_POLL " + JSONObject().put("token", session).put("revision", revision)
+                    .put("telemetry", JSONObject(StreamStats.snapshot))).toByteArray(Charsets.UTF_8)
+                control.send(DatagramPacket(hello, hello.size, address, 5005))
+            }
             val packet = DatagramPacket(buffer, buffer.size)
             control.receive(packet)
             if (packet.address != address) continue
             val json = JSONObject(String(packet.data, packet.offset, packet.length, Charsets.UTF_8))
+            if (session.isNotEmpty() && json.optString("session") != session) continue
+            if (json.has("revision")) revision = json.getString("revision")
             when (json.optString("command")) {
                 "NACK" -> {
                     StreamStats.nackRequests.incrementAndGet()
@@ -97,7 +109,7 @@ class RtpH264Sender(
                         currentBitrate = value
                     }
                 }
-                "TAP_FOCUS", "SET_CONTROLS" -> {
+                "TAP_FOCUS", "SET_CONTROLS", "START_STREAM", "STOP_STREAM", "HEARTBEAT" -> {
                     onCommand?.invoke(json)
                 }
             }

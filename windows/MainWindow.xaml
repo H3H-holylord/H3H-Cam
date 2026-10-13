@@ -28,6 +28,7 @@
      <ComboBoxItem Content="Русский"/>
      <ComboBoxItem Content="English"/>
     </ComboBox>
+    <Button Content="{DynamicResource setup_help}" Click="ConnectionGuide_Click" Padding="10,6" Margin="0,0,8,0" FontSize="12"/>
     <Button x:Name="ModeToggleButton" Content="{DynamicResource s_45e2a6940134}" Click="ModeToggle_Click" Padding="12,6" Margin="0,0,10,0" Background="#162D42" Foreground="#00d2ff" FontWeight="SemiBold" FontSize="12" ToolTip="{DynamicResource s_ab483afe53b9}"/>
     <Border Background="#152C2B" CornerRadius="16" Padding="16,8">
      <TextBlock x:Name="ConnectionLabel" Text="{DynamicResource s_b37981243396}" Foreground="#70E5C3" FontWeight="SemiBold"/>
@@ -106,6 +107,15 @@
        </TextBox>
        <Button Content="{DynamicResource s_4f2ca7cc3bf7}" Click="Scan_Click" IsEnabled="{Binding IsEnabled, ElementName=ScanButton}" HorizontalAlignment="Stretch" Margin="0,0,0,6"/>
        <TextBlock Text="{Binding Text, ElementName=DeviceHint}" Foreground="#8498B4" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,16"/>
+       <Border Background="#162D42" CornerRadius="8" Padding="12" Margin="0,0,0,12">
+        <StackPanel>
+         <TextBlock Text="{DynamicResource setup_title}" FontWeight="SemiBold" Foreground="#70E5C3"/>
+         <TextBlock x:Name="ConnectionHelpText" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,8"/>
+         <Button Content="{DynamicResource setup_connect}" Click="QuickConnect_Click" IsEnabled="{Binding IsEnabled, ElementName=ScanButton}"/>
+         <Button Content="{DynamicResource setup_qr}" Click="ShowQr_Click" Margin="0,6,0,0"/>
+        </StackPanel>
+       </Border>
+       <StackPanel x:Name="BasicCameraSettings" Visibility="Collapsed">
        <!-- Камера -->
        <TextBlock Text="{DynamicResource s_5d6f264e301f}" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,6"/>
        <ComboBox x:Name="BasicCameraChoice" DisplayMemberPath="DisplayLabel" SelectedValuePath="Key" SelectionChanged="BasicCameraChoice_Changed" Margin="0,0,0,8"/>
@@ -139,6 +149,7 @@
        <CheckBox x:Name="BasicStabilizationCheck" Content="{DynamicResource s_dfa78d932025}" Click="BasicStabilization_Click" Margin="0,0,0,4"/>
        <CheckBox x:Name="BasicSuperSteadyCheck" Content="{DynamicResource s_5e99808b4b3f}" Click="BasicSuperSteady_Click" Margin="20,0,0,14" ToolTip="{DynamicResource s_9fbacf088232}"/>
 
+       </StackPanel>
        <!-- Большая кнопка Старт -->
        <Button x:Name="BasicStartButton" Content="{DynamicResource s_9825166bb975}" Height="50" Background="#1CA989" Foreground="#041C16" FontWeight="Bold" FontSize="16" Click="BasicStart_Click" Margin="0,0,0,10"/>
 

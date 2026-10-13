@@ -274,7 +274,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         if (!deviceSettingsChanged) return;
 
         try {
-            if (effectiveTransport is "wifi" or "usb") {
+            if (PairedWifi) {
+                SendWifiControl(WifiPairing.StreamCommand(settings, "SET_CONTROLS"));
+            } else if (effectiveTransport is "wifi" or "usb") {
                 // Use the established, reliable control connection for user settings.
                 // UDP feedback remains for time-critical NACK/IDR messages.
                 await adb.UpdateControls(settings, ct);
@@ -389,7 +391,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             tcp?.Stop();
             if (adb.Serial.Length > 0) {
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(12));
-                await adb.Stop(cleanup.Token);
+                if (!PairedWifi) await adb.Stop(cleanup.Token);
             }
         }
     }
@@ -460,13 +462,35 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         }
     }
 
+    public bool KeepPairedPhoneForRestart { get; set; }
+    public void AcceptWifiTelemetry(string ip, JsonElement j) {
+        if (!PairedWifi || !Running || ip != Settings.EndpointHost(settings.PhoneIp) ||
+            StringValue(j, "sessionId", "") != settings.WifiPairSession) return;
+        androidState = StringValue(j, "state", androidState);
+        encodedMbps = DoubleValue(j, "bitrateMbps", encodedMbps);
+        var cameraFps = IntValue(j, "selectedFps", 0);
+        if (cameraFps is >= 1 and <= 240) Volatile.Write(ref selectedFps, cameraFps);
+        resolution = StringValue(j, "resolution", resolution);
+        details = StringValue(j, "codec", "") + " · encoder " + DoubleValue(j, "fps", 0).ToString("F1", CultureInfo.InvariantCulture) + " fps · " + StringValue(j, "controls", "");
+        thermal = BatterySummary(j);
+        power = PowerTelemetry.From(j);
+        if (j.TryGetProperty("faceX", out var fx) && fx.ValueKind == JsonValueKind.Number)
+            lastFace = new FaceTrackingInfo((float)fx.GetDouble(), (float)DoubleValue(j, "faceY", 0.5),
+                (float)DoubleValue(j, "faceW", 0), (float)DoubleValue(j, "faceH", 0),
+                (float)DoubleValue(j, "cropCx", 0.5), (float)DoubleValue(j, "cropCy", 0.5),
+                (float)DoubleValue(j, "cropZoom", 1), IntValue(j, "faceCount", 1));
+        Volatile.Write(ref droppedFrames, IntValue(j, "dropped", 0));
+        Interlocked.Exchange(ref lastTelemetry, Environment.TickCount64);
+    }
+    public Func<Task>? StopPairedPhone { get; set; }
+    private bool PairedWifi => settings.Transport == "wifi" && settings.WifiPairSession.Length > 0;
     public async Task Start(CancellationToken token = default) {
         await lifecycle.WaitAsync(token);
         try {
             if (Running) return;
             lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
             var ct = lifetime.Token;
-            if (settings.Transport is "usb" or "wifi")
+            if (!PairedWifi && (settings.Transport is "usb" or "wifi"))
                 settings.AdbPath = ToolPaths.Find("adb.exe", settings.AdbPath);
             else if (settings.Transport == "auto") {
                 try { settings.AdbPath = ToolPaths.Find("adb.exe", settings.AdbPath); }
@@ -477,7 +501,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             // ADB resolves the actual phone endpoint and local route into this runtime snapshot.
             adb.UpdateSettings(settings);
 
-            if (settings.Transport == "direct") {
+            if (PairedWifi) {
+                effectiveTransport = "wifi";
+            } else if (settings.Transport == "direct") {
                 effectiveTransport = "direct";
             } else if (settings.Transport == "auto") {
                 effectiveTransport = await connectionManager.ResolveAutoTransportAsync(aoa, adb, settings, ct);
@@ -557,7 +583,8 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             await ConfigureInput(effectiveTransport, ct, initial: true);
             if (settings.Preview) StartPreview();
             if (settings.Obs) StartFfmpeg(ct);
-            if (effectiveTransport != "direct") { StartLogcat(ct); await adb.StartStream(ct); }
+            if (PairedWifi) SendWifiControl(WifiPairing.StreamCommand(settings));
+            else if (effectiveTransport != "direct") { StartLogcat(ct); await adb.StartStream(ct); }
             var effectiveBitrate = settings.EffectiveBitrateMbps(effectiveTransport);
             if (effectiveTransport == "wifi" && effectiveBitrate < settings.BitrateMbps)
                 log($"Wi-Fi limit · bitrate reduced from {settings.BitrateMbps} to {effectiveBitrate} Mbps; FPS and low latency remain unchanged");
@@ -755,6 +782,13 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         var state = new RtpSessionState();
         while (!ct.IsCancellationRequested) {
             var datagram = await socket.ReceiveAsync(ct);
+            if (PairedWifi) {
+                if (!datagram.RemoteEndPoint.Address.Equals(expectedPhoneAddress)) continue;
+                if (datagram.Buffer.Length < 128 && Encoding.UTF8.GetString(datagram.Buffer) == "H3HCAM_CONTROL_HELLO " + settings.WifiPairSession) {
+                    controlEndpoint = datagram.RemoteEndPoint;
+                    continue;
+                }
+            }
             var expected = expectedPhoneAddress;
             if (expected == null || !datagram.RemoteEndPoint.Address.Equals(expected)) {
                 if (datagram.Buffer.Length >= 12 && (datagram.Buffer[0] & 0xC0) == 0x80) {
@@ -947,12 +981,13 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     }
 
     private void SendWifiControl(object command) {
-        var socket = control;
+        var socket = PairedWifi ? incoming : control;
         var endpoint = controlEndpoint;
         if (effectiveTransport != "wifi" || socket == null || endpoint == null) return;
         try {
-            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(command));
-            _ = socket.SendAsync(bytes, endpoint);
+            var bytes = WifiPairing.Control(command, settings.WifiPairSession);
+            // Finish the small datagram before STOP disposes its socket.
+            socket.Send(bytes, bytes.Length, endpoint);
         } catch (Exception ex) { log("Wi-Fi control · " + ex.Message); }
     }
 
@@ -1140,7 +1175,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                    }
                   } finally { lifecycle.Release(); }
                 }
-                if (settings.ScreenOff && effectiveTransport != "direct" && !screenSlept && fps > 0) {
+                if (settings.ScreenOff && !PairedWifi && effectiveTransport != "direct" && !screenSlept && fps > 0) {
                     await adb.Command(ct, "shell", "input", "keyevent", "223");
                     screenSlept = true;
                     log(L.Get("s_2ac19455b030"));
@@ -1162,12 +1197,21 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                         PreviewChanged?.Invoke(false);
                     }
                 }
-                if (effectiveTransport != "direct" && (logcat?.HasExited != false || logcatSerial != adb.Serial) && tick - lastLogcatStart > 5000)
+                if (!PairedWifi && effectiveTransport != "direct" && (logcat?.HasExited != false || logcatSerial != adb.Serial) && tick - lastLogcatStart > 5000)
                     StartLogcat(ct);
             } catch (Exception ex) when (!ct.IsCancellationRequested) {
                 log("Monitor · " + ex.Message);
             }
 
+            if (PairedWifi) {
+                SendWifiControl(new { command = "HEARTBEAT" });
+                if (idle > 8000 && tick - lastRecovery > 5000) {
+                    lastRecovery = tick;
+                    SendWifiControl(WifiPairing.StreamCommand(settings));
+                    RequestIdr();
+                }
+                continue;
+            }
             var isUsbOrDirect = effectiveTransport is "usb" or "direct";
             var stallTimeout = (settings.AutoReconnect && isUsbOrDirect) ? 3500 : 8000;
             var retryInterval = (settings.AutoReconnect && isUsbOrDirect) ? 4000 : 10000;
@@ -1250,6 +1294,8 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         if (cts == null) return;
         // FFmpeg must still receive input while it processes its quit command.
         StopRecording();
+        if (PairedWifi && !KeepPairedPhoneForRestart) for (var i = 0; i < 3; i++) SendWifiControl(new { command = "STOP_STREAM" });
+        if (PairedWifi && !KeepPairedPhoneForRestart && StopPairedPhone != null) await StopPairedPhone();
         cts.Cancel();
         inputLifetime?.Cancel();
         incoming?.Dispose();

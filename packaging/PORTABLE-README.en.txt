@@ -1,11 +1,13 @@
-H3H Cam 4.0.12 - full Portable for Windows x64
+H3H Cam 4.0.13 - full Portable for Windows x64
 
 1. Extract the ENTIRE ZIP into a folder. Do not run the EXE inside the ZIP.
 2. Run H3HCam Receiver.exe. .NET, FFmpeg/FFplay and ADB are included.
-3. Install H3H-Cam-4.0.6.apk on your Android phone and allow camera access.
+3. Install H3H-Cam-4.0.7.apk on your Android phone and allow camera access.
    Transfer the APK and open it on Android, or enable USB debugging,
    connect one authorized phone and run Install-on-phone.cmd.
-4. Select "USB - via ADB" in Windows, press FIND, choose a camera and START.
+4. Without USB debugging: use the same LAN → Wi-Fi: show QR code on Windows →
+   SCAN QR on the phone → START.
+   Over a cable: approve USB debugging and click Connect and start on Windows.
    Leave tool paths empty. Some phones need a manufacturer's USB driver.
 
 Choose English, Русский or Automatic at the top of either app.

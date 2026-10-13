@@ -4,9 +4,9 @@
 
 ## Install
 
-Download the [full Portable 4.0.12](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.12/H3H-Cam-4.0.12-Portable.zip). Extract **all** files to a folder and run `H3HCam Receiver.exe`. Do not run it inside the ZIP viewer. Leave tool paths empty: .NET, FFmpeg/FFplay, ADB and the AI model are included.
+Download the [full Portable 4.0.13](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.13/H3H-Cam-4.0.13-Portable.zip). Extract **all** files to a folder and run `H3HCam Receiver.exe`. Do not run it inside the ZIP viewer. Leave tool paths empty: .NET, FFmpeg/FFplay, ADB and the AI model are included.
 
-Install `H3H-Cam-4.0.6.apk` on the phone and grant camera permission. You can transfer the APK and open it on Android, allowing installation from that source when prompted. For installation from Windows, enable developer options and USB debugging, connect a data cable, unlock the phone and run `Install-on-phone.cmd`. Confirm Android's debugging prompt. The installer requires exactly one authorized phone and updates the APK without deleting its data.
+Install `H3H-Cam-4.0.7.apk` on the phone and grant camera permission. You can transfer the APK and open it on Android, allowing installation from that source when prompted. For installation from Windows, enable developer options and USB debugging, connect a data cable, unlock the phone and run `Install-on-phone.cmd`. Confirm Android's debugging prompt. The installer requires exactly one authorized phone and updates the APK without deleting its data.
 
 ## Language
 
@@ -20,7 +20,9 @@ In Windows select **USB · via ADB**, press **FIND**, choose the camera and mode
 
 ## Wi-Fi
 
-Use the same trusted local network for the phone and PC. The PC can use Ethernet and the phone Wi-Fi through the same router. For initial setup, connect the authorized phone over USB; choose Wi-Fi and **FIND** so the client can enable wireless ADB and detect its address. Select the PC interface on that network. Firewall or router client isolation can prevent discovery.
+Windows 4.0.13 and Android 4.0.7 support pairing without ADB: click **Wi-Fi: show QR code** on the PC, tap **SCAN QR (WI-FI)** on the phone, then confirm **START**. Update both apps. Windows receives the camera list and sends the selected settings. After STOP, scan a new code. Both devices must share a trusted local network; Ethernet on the PC is fine. Firewall or router client isolation can prevent connection.
+
+The previous Wi-Fi ADB mode remains available in advanced settings. A QR expires after five minutes. STOP closes the phone camera; if the PC disappears, Android stops after 30 seconds without replies. Use the power button to turn the phone screen off; automatic screen-off from Windows requires ADB.
 
 ## Camera and quality
 

@@ -13,6 +13,14 @@ internal static class Program {
     [STAThread]
     private static int Main(string[] args) {
         try {
+            if (args.Length >= 3 && args[0] == "pairing-live") {
+                OnboardingTests.Live(Path.GetFullPath(args[1]), Path.GetFullPath(args[2])).GetAwaiter().GetResult();
+                return 0;
+            }
+            if (args.Length >= 2 && args[0] == "pairing") {
+                OnboardingTests.Run(Path.GetFullPath(args[1])).GetAwaiter().GetResult();
+                return 0;
+            }
             if (args.Length >= 2 && args[0] == "language-ui") {
                 LocalizationTests.Ui(Path.GetFullPath(args[1]));
                 return 0;

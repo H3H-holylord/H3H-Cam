@@ -12,3 +12,7 @@ H3H Cam — GPL-3.0. Сторонние компоненты сохраняют 
 - Облегчённый Windows ZIP не включает FFmpeg/FFplay, ADB, APK и AI-веса. Полная OBS Studio и плагин Spout2 устанавливаются отдельно в обоих вариантах; обычный вывод виртуальной камеры не требует Spout2.
 - OBS Virtual Camera 32.2.2: неизменённые официальные DLL x64/x86 входят в `tools/virtualcam` Windows ZIP, GPL-2.0-or-later. Лицензия в `licenses/OBS-GPL-2.0.txt`, происхождение/хэши и сборка в [windows/native/virtualcam/README.md](windows/native/virtualcam/README.md). Полные соответствующие исходники с libdshowcapture, `OBS-Studio-32.2.2-Sources.tar.gz`, включены в `ThirdParty-Sources.zip` этого релиза. [Официальный релиз и исходники](https://github.com/obsproject/obs-studio/releases/tag/32.2.2).
 - Обмен с OBS Virtual Camera использует совместимый shared-memory ABI. [Протокол OBS](https://github.com/obsproject/obs-studio/tree/32.2.2/shared/obs-shared-memory-queue), GPL-2.0-or-later.
+# QR pairing (Windows 4.0.13 / Android 4.0.7)
+
+- QRCoder 1.8.0: QR encoding on Windows, MIT; see `licenses/QRCoder-LICENSE.txt` and https://github.com/Shane32/QRCoder.
+- ZXing Android Embedded 4.3.0 and ZXing Core: offline scanning on Android, Apache-2.0; see `licenses/ZXing-Android-Embedded-LICENSE.txt` and https://github.com/journeyapps/zxing-android-embedded.

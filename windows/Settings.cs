@@ -6,7 +6,8 @@ namespace S8Cam;
 
 public sealed class Settings {
     public string Language { get; set; } = "auto";
-    public string Transport { get; set; } = "direct";
+    public string Transport { get; set; } = "auto";
+    [System.Text.Json.Serialization.JsonIgnore] public string WifiPairSession { get; set; } = "";
     public string PhoneIp { get; set; } = "192.168.1.100";
     public string PcIp { get; set; } = "";
     public bool AutoPcIp { get; set; } = true;

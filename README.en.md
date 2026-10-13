@@ -6,12 +6,14 @@
 
 **H3H Cam** connects an Android phone to Windows for streaming, video calls and recording. Select the camera and video settings on your computer; the phone captures and encodes video with its hardware codec.
 
-[**Download the full Portable 4.0.12**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.12/H3H-Cam-4.0.12-Portable.zip) · [Quick start](docs/QUICKSTART.en.md) · [Report a problem](https://github.com/H3H-holylord/H3H-Cam/issues)
+[**Download the full Portable 4.0.13**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.13/H3H-Cam-4.0.13-Portable.zip) · [Quick start](docs/QUICKSTART.en.md) · [Report a problem](https://github.com/H3H-holylord/H3H-Cam/issues)
 
 ## Start here
 
+For Wi-Fi without USB debugging, update both apps (Windows 4.0.13 / Android 4.0.7), click **Wi-Fi: show QR code** on Windows, tap **SCAN QR (WI-FI)** on Android and confirm **START**. The PC receives the camera list and sends compatible settings. Both devices must share the same LAN; Ethernet on the PC is fine. For a cable connection use **Connect and start** and follow the built-in USB steps.
+
 1. Extract the **entire** Portable ZIP to a folder and run `H3HCam Receiver.exe`. Keep `tools` and `models` next to the EXE. .NET, FFmpeg, FFplay and ADB are included; leave tool paths empty.
-2. Install `H3H-Cam-4.0.6.apk` on your phone, open it and allow camera access. You can transfer the APK to the phone and open it there, or enable USB debugging and use `Install-on-phone.cmd` with one authorized phone connected.
+2. Install `H3H-Cam-4.0.7.apk` on your phone, open it and allow camera access. You can transfer the APK to the phone and open it there, or enable USB debugging and use `Install-on-phone.cmd` with one authorized phone connected.
 3. In Windows select **USB · via ADB**, press **FIND**, choose a camera, then **START**. Confirm the debugging prompt on the phone. Some phones need their manufacturer's Windows USB driver.
 4. Enable **Virtual camera**. In OBS add a **Video Capture Device** source and choose the camera name shown in H3H Cam's status. Zoom and Discord can use the same camera. OBS itself is not required for video calls.
 
@@ -33,7 +35,7 @@ For games, turn off unused previews and effects and leave some GPU capacity avai
 
 The full Portable includes the Windows client with .NET, Android APK, FFmpeg/FFplay, ADB with its DLLs, libusb, x64/x86 virtual camera modules, an AI model and instructions. OBS, video-call apps and device drivers are installed separately.
 
-[Android APK 4.0.6](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.12/H3H-Cam-4.0.6.apk) · [Release checksums](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.12/SHA256SUMS.txt)
+[Android APK 4.0.7](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.13/H3H-Cam-4.0.7.apk) · [Release checksums](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.13/SHA256SUMS.txt)
 
 Source: `android/` for capture/encoding, `windows/` for .NET 8 WPF and output, `tests/` for verification, `docs/` for instructions. On Windows with .NET 8 SDK, run `dotnet publish windows/S8Cam.Receiver.csproj -c Release -r win-x64 --self-contained true` and `dotnet run --project tests -c Release -- unit test-results`. Android needs JDK 17+ and Android SDK API 37: run `gradlew.bat assembleDebug testDebugUnitTest lintDebug` from `android/`. [Detailed build instructions (Russian)](docs/BUILD.md).
 

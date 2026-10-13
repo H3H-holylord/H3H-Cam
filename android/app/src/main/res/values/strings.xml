@@ -43,4 +43,12 @@
     <string name="state_usb_disconnected">USB Direct disconnected</string>
     <string name="state_usb_reconfigured">USB Direct · camera reconfigured</string>
     <string name="state_reconnecting">Reconnecting:</string>
+    <string name="scan_qr">SCAN QR (WI-FI)</string>
+    <string name="scan_prompt">Point the camera at the QR code in H3H Cam on Windows</string>
+    <string name="connection_help">HOW TO CONNECT</string>
+    <string name="connection_steps">Wi-Fi without debugging: phone and PC must share a local network. Click Wi-Fi: show QR code on Windows, then Scan QR here. Confirm START; the PC sends the settings.\n\nUSB via ADB: use a data cable, enable USB debugging and approve the computer key. Click Connect and start on Windows.\n\nUSB Direct requires Android Accessory support and a WinUSB driver on the PC.\n\nFor a normal webcam select 16:9 Landscape on Windows. Use the power button to turn the screen off.</string>
+    <string name="pair_stop_first">Stop streaming or wait for the current connection first</string>
+    <string name="qr_invalid">This is not a valid H3H Cam QR. Update the Windows client and show a new code.</string>
+    <string name="qr_confirm">Connect the camera to the PC at %1$s? Windows controls the settings. USB debugging is not required.</string>
+    <string name="wifi_use_qr">Found PC %1$s. To connect, show its QR code on Windows and tap Scan QR here.</string>
 </resources>

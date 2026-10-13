@@ -18,7 +18,12 @@ import org.json.JSONObject
 import java.util.Locale
 
 /** The phone is controlled by Windows so two setting screens cannot conflict. */
-open class MainActivity : Activity() {
+open class MainActivity : androidx.activity.ComponentActivity() {
+    private var pairing = false
+    private var pairingTarget: WifiPairTarget? = null
+    private val scanner = registerForActivityResult(com.journeyapps.barcodescanner.ScanContract()) { result ->
+        result.contents?.let { openPairing(it) }
+    }
     override fun attachBaseContext(base: Context) = super.attachBaseContext(UiLanguage.context(base))
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var root: LinearLayout
@@ -28,6 +33,7 @@ open class MainActivity : Activity() {
     private var commandPending = false
     private var accessoryPending = false
     private var black = false
+    private var wasStreaming = false
     private val muted = Color.rgb(147, 163, 186)
 
     override fun onCreate(saved: Bundle?) {
@@ -49,6 +55,8 @@ open class MainActivity : Activity() {
             launchPending = true
             status.text = getString(R.string.usb_attached)
         }
+        if (saved == null && intent.action == Intent.ACTION_VIEW) intent.dataString?.let { openPairing(it) }
+        intent.data = null
     }
 
     private fun dp(n: Int) = (resources.displayMetrics.density * n).toInt()
@@ -118,6 +126,16 @@ open class MainActivity : Activity() {
 
         status = addText(if (StreamStats.running) UiLanguage.state(this@MainActivity, StreamStats.state) else
             getString(R.string.ready_hint), 16f, Color.WHITE)
+        addButton(getString(R.string.scan_qr)) {
+            if (StreamStats.running || pairing) Toast.makeText(this, getString(R.string.pair_stop_first), Toast.LENGTH_LONG).show()
+            else scanner.launch(com.journeyapps.barcodescanner.ScanOptions()
+                .setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
+                .setPrompt(getString(R.string.scan_prompt)).setBeepEnabled(false).setOrientationLocked(false))
+        }
+        addButton(getString(R.string.connection_help)) {
+            android.app.AlertDialog.Builder(this).setTitle(R.string.connection_help)
+                .setMessage(R.string.connection_steps).setPositiveButton(android.R.string.ok, null).show()
+        }
         addButton(getString(R.string.stop)) {
             launchPending = false
             stopService(Intent(this, StreamService::class.java))
@@ -126,6 +144,43 @@ open class MainActivity : Activity() {
         addButton(getString(R.string.find_computer)) { discoverWifiPc() }
         addButton(getString(R.string.black_screen)) { showBlackScreen() }
         addText(getString(R.string.transport_hint))
+    }
+
+    private fun openPairing(value: String) {
+        if (pairing || StreamStats.running) { Toast.makeText(this, getString(R.string.pair_stop_first), Toast.LENGTH_LONG).show(); return }
+        val target = try { WifiPairTarget.parse(value) } catch (_: Exception) {
+            Toast.makeText(this, getString(R.string.qr_invalid), Toast.LENGTH_LONG).show(); return
+        }
+        android.app.AlertDialog.Builder(this).setTitle(R.string.wifi_found_title)
+            .setMessage(getString(R.string.qr_confirm, target.ip))
+            .setPositiveButton(R.string.start) { _, _ ->
+                pairingTarget = target
+                if (!hasCameraPermission()) requestPermissions(arrayOf(Manifest.permission.CAMERA), 10)
+                else connectPairedWifi()
+            }.setNegativeButton(R.string.cancel, null).show()
+    }
+
+    private fun connectPairedWifi() {
+        val target = pairingTarget ?: return
+        pairingTarget = null
+        pairing = true
+        status.text = getString(R.string.wifi_searching)
+        Thread {
+            try {
+                val settings = WifiPairClient.connect(applicationContext, target)
+                ui.post {
+                    pairing = false
+                    if (isFinishing || isDestroyed || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return@post
+                    try {
+                        settings.save(this)
+                        startForegroundService(settings.applyTo(Intent(this, StreamService::class.java)))
+                        status.text = getString(R.string.wifi_started, settings.ip, settings.wifiPort)
+                    } catch (e: Exception) { status.text = getString(R.string.wifi_search_failed, e.message ?: "") }
+                }
+            } catch (e: Exception) {
+                ui.post { pairing = false; if (!isFinishing && !isDestroyed) status.text = getString(R.string.wifi_search_failed, e.message ?: "") }
+            }
+        }.start()
     }
 
     private fun discoverWifiPc() {
@@ -173,22 +228,8 @@ open class MainActivity : Activity() {
                                 status.text = getString(R.string.wifi_found, pcName, pcIp)
                                 val dialog = android.app.AlertDialog.Builder(this)
                                     .setTitle(getString(R.string.wifi_found_title))
-                                    .setMessage(getString(R.string.wifi_connect_question, pcName, pcIp, port))
-                                    .setPositiveButton(getString(R.string.start)) { _, _ ->
-                                        val current = StreamSettings.load(this).copy(
-                                            transport = "wifi",
-                                            ip = pcIp,
-                                            wifiPort = port
-                                        )
-                                        current.save(this)
-                                        val serviceIntent = current.applyTo(Intent(this, StreamService::class.java))
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                            startForegroundService(serviceIntent)
-                                        } else {
-                                            startService(serviceIntent)
-                                        }
-                                        status.text = getString(R.string.wifi_started, pcIp, port)
-                                    }
+                                    .setMessage(getString(R.string.wifi_use_qr, pcName))
+                                    .setPositiveButton(android.R.string.ok, null)
                                     .setNegativeButton(getString(R.string.cancel), null)
                                     .create()
                                 dialog.show()
@@ -278,6 +319,10 @@ open class MainActivity : Activity() {
     override fun onNewIntent(next: Intent) {
         super.onNewIntent(next)
         setIntent(next)
+        if (next.action == Intent.ACTION_VIEW) {
+            next.dataString?.let { openPairing(it) }
+            next.data = null
+        }
         if (this is ControlActivity) {
             launchPending = next.action == "com.h3h.s8cam.START"
             commandPending = launchPending
@@ -291,9 +336,12 @@ open class MainActivity : Activity() {
             permission.text = permissionText()
             permission.setTextColor(if (hasCameraPermission()) Color.rgb(112, 229, 195) else Color.rgb(245, 184, 92))
         }
-        if (code == 10 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) startIfReady()
+        if (code == 10 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            if (pairingTarget != null) connectPairedWifi() else startIfReady()
+        }
         else if (code == 10) {
             launchPending = false
+            pairingTarget = null
             Toast.makeText(this, getString(R.string.camera_permission_error), Toast.LENGTH_LONG).show()
         }
     }
@@ -301,7 +349,13 @@ open class MainActivity : Activity() {
     private val refresh = object : Runnable {
         override fun run() {
             if (!black && ::status.isInitialized) {
-                if (!StreamStats.running) status.text = UiLanguage.state(this@MainActivity, StreamStats.state)
+                if (!StreamStats.running && wasStreaming) {
+                    wasStreaming = false
+                    status.text = getString(R.string.state_stopped)
+                }
+                if (StreamStats.running) wasStreaming = true
+                if (!StreamStats.running && launchPending) status.text = UiLanguage.state(this@MainActivity, StreamStats.state)
+                else if (!StreamStats.running) { /* Keep connection instructions and errors visible. */ }
                 else try {
                     val j = JSONObject(StreamStats.snapshot)
                     status.text = String.format(

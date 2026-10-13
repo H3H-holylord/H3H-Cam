@@ -173,6 +173,10 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             return;
         }
 
+        // A cabled phone awaiting approval must not be hidden behind a Wi-Fi timeout.
+        var blockedUsb = PhysicalUsb().FirstOrDefault(d => !d.Authorized);
+        if (blockedUsb != null) throw StateError(blockedUsb);
+
         try {
             Select(await PickWifi(ct, allowLegacyUsb: false), "wifi");
             return;

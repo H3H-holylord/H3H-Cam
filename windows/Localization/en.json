@@ -627,5 +627,19 @@
   "s_72f702009be4": "🪄 Classic bokeh (ellipse)",
   "language_label": "Language",
   "language_auto": "Automatic",
-  "gpu_upscale": "💎 GPU upscale to 4K"
+  "gpu_upscale": "💎 GPU upscale to 4K",
+  "setup_help": "Help",
+  "setup_title": "Connect in three steps",
+  "setup_connect": "Connect and start",
+  "setup_qr": "Wi-Fi: show QR code",
+  "setup_usb_steps": "1. Open H3H Cam on the phone and allow the camera.\n2. Use a data cable, enable USB debugging and approve the prompt on the phone.\n3. Click Connect and start. For a connection without debugging, use Wi-Fi QR.",
+  "setup_wifi_steps": "Phone and PC must share the same local network; Ethernet on the PC is fine. Show the QR code and tap Scan QR on the phone. USB debugging is not required.",
+  "setup_direct_steps": "USB Direct needs Android Accessory support and a WinUSB driver. Unlock the phone, open H3H Cam and approve USB access. If it is not detected, use USB via ADB or Wi-Fi QR.",
+  "setup_qr_hint": "On the phone: H3H Cam → Scan QR → START. Leave this window open until connected. The code expires in 5 minutes. No USB debugging required. Use the power button to turn the phone screen off.",
+  "setup_pc_busy": "Stop streaming and wait for the current operation before connecting another phone.",
+  "setup_no_cameras": "The phone reported no cameras. Allow camera access on Android.",
+  "setup_wifi_unavailable": "Wi-Fi pairing is unavailable. Restart the client.",
+  "setup_wifi_paired": "Wi-Fi via QR · no ADB. The PC controls settings. After STOP, scan a new QR.",
+  "setup_guide_title": "How to connect H3H Cam",
+  "setup_guide_body": "Install the APK, open H3H Cam on the phone and allow the camera.\n\nUSB: use a data cable. For ADB mode enable Developer options → USB debugging. Unlock the phone and approve the computer key. If the prompt does not appear, try another cable/port and check the manufacturer driver.\n\nWi-Fi without ADB: both devices must share a local network (Ethernet on the PC is fine). Show the QR on Windows, tap Scan QR on Android and confirm START. If it fails, check the firewall permission for H3H Cam and router guest-network/client isolation.\n\nUSB Direct is an additional mode requiring Android Accessory support and WinUSB.\n\nCamera and quality controls appear after the phone is detected. Use 16:9 Landscape for a normal webcam; 9:16 is for Shorts.\n\nOBS: add Video Capture Device → H3H Cam. Select the same camera in Zoom/Discord. Use the power button to turn the phone screen off."
 }

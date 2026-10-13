@@ -23,12 +23,26 @@ public sealed class WifiDiscoveryService : IDisposable {
     private Task? listenTask;
     private Task? broadcastTask;
     private bool disposed;
+    private readonly int port;
 
     public event Action<DiscoveredPhone>? PhoneDiscovered;
+    public Func<WifiPairRequest, Task<Settings>>? PairRequested { get; set; }
+    public Action<string, JsonElement>? PairedTelemetry { get; set; }
+    private WifiPairingTicket? invitation;
+    public WifiPairingTicket OpenPairing() => invitation = new WifiPairingTicket();
+    public void ClosePairing(WifiPairingTicket ticket) { if (ReferenceEquals(invitation, ticket)) invitation = null; }
+    public async Task StopPairedAsync(string token) {
+        var ticket = invitation;
+        if (ticket == null || ticket.Token != token) return;
+        ticket.StopRequested = true;
+        try { await ticket.StopDelivered.Task.WaitAsync(TimeSpan.FromSeconds(3)); }
+        catch (TimeoutException) { }
+    }
 
-    public WifiDiscoveryService(Func<Settings> getSettings, Action<string> log) {
+    public WifiDiscoveryService(Func<Settings> getSettings, Action<string> log, int port = DiscoveryPort) {
         this.getSettings = getSettings;
         this.log = log;
+        this.port = port;
     }
 
     public void Start() {
@@ -36,7 +50,7 @@ public sealed class WifiDiscoveryService : IDisposable {
         try {
             udp = new UdpClient();
             udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            udp.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryPort));
+            udp.Client.Bind(new IPEndPoint(IPAddress.Any, port));
             udp.EnableBroadcast = true;
         } catch (Exception ex) {
             log("Wi-Fi Discovery bind: " + ex.Message);
@@ -58,7 +72,13 @@ public sealed class WifiDiscoveryService : IDisposable {
             } catch { }
         }
         try {
-            foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()) {
+            var candidates = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+                .Where(ni => ni.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up &&
+                    ni.NetworkInterfaceType is System.Net.NetworkInformation.NetworkInterfaceType.Ethernet or System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211)
+                .OrderBy(ni => new[] { "virtual", "vpn", "xray", "wireguard", "tap", "tunnel", "usb", "rndis", "remote ndis" }
+                    .Any(word => ni.Description.Contains(word, StringComparison.OrdinalIgnoreCase)) ? 1 : 0)
+                .ThenBy(ni => ni.GetIPProperties().GatewayAddresses.Count > 0 ? 0 : 1);
+            foreach (var ni in candidates) {
                 if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
                 if (ni.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
                 var props = ni.GetIPProperties();
@@ -81,6 +101,47 @@ public sealed class WifiDiscoveryService : IDisposable {
             try {
                 var result = await udp.ReceiveAsync(ct);
                 var text = Encoding.UTF8.GetString(result.Buffer);
+                if (text.StartsWith("H3HCAM_CONTROL_POLL ", StringComparison.Ordinal)) {
+                    using var poll = JsonDocument.Parse(text[20..]);
+                    var ticket = invitation;
+                    var token = poll.RootElement.GetProperty("token").GetString();
+                    if (ticket?.ReadySettings == null || ticket.Token != token || ticket.PhoneIp != result.RemoteEndPoint.Address.ToString()) continue;
+                    if (poll.RootElement.TryGetProperty("telemetry", out var telemetry)) PairedTelemetry?.Invoke(ticket.PhoneIp, telemetry);
+                    var current = getSettings();
+                    object command = ticket.StopRequested || current.WifiPairSession != token
+                        ? new { command = "STOP_STREAM" } : WifiPairing.StreamCommand(current, "SET_CONTROLS");
+                    var serialized = JsonSerializer.Serialize(command);
+                    var revision = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(serialized)))[..16];
+                    var previous = poll.RootElement.TryGetProperty("revision", out var rev) ? rev.GetString() : "";
+                    if (previous == revision && !ticket.StopRequested) command = new { command = "HEARTBEAT" };
+                    var response = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(command))!;
+                    response["session"] = token;
+                    response["revision"] = revision;
+                    var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
+                    await udp.SendAsync(bytes, bytes.Length, result.RemoteEndPoint);
+                    if (ticket.StopRequested) ticket.StopDelivered.TrySetResult();
+                    continue;
+                }
+                if (text.StartsWith("H3HCAM_PAIR ", StringComparison.Ordinal)) {
+                    using var doc = JsonDocument.Parse(text[12..]);
+                    var token = doc.RootElement.GetProperty("token").GetString() ?? "";
+                    var ticket = invitation;
+                    if (ticket == null || !ticket.Claim(token, result.RemoteEndPoint.Address) || PairRequested == null) continue;
+                    object reply;
+                    try {
+                        var phone = PhoneCapabilities.ParseJson(doc.RootElement.GetProperty("capabilities").GetRawText());
+                        if (phone.Cameras.Count == 0) throw new InvalidOperationException(L.Get("setup_no_cameras"));
+                        var ready = ticket.ReadySettings ?? await PairRequested(new(result.RemoteEndPoint.Address.ToString(), token, phone));
+                        ticket.ReadySettings = ready;
+                        reply = new { token, ready = true, port = ready.RtpPort, settings = WifiPairing.StreamCommand(ready) };
+                    } catch (Exception ex) {
+                        log("Wi-Fi pairing: " + ex.Message);
+                        reply = new { token, ready = false, error = ex.Message };
+                    }
+                    var bytes = Encoding.UTF8.GetBytes("H3HCAM_PAIR_READY " + JsonSerializer.Serialize(reply));
+                    await udp.SendAsync(bytes, bytes.Length, result.RemoteEndPoint);
+                    continue;
+                }
                 if (text.Contains("H3HCAM_DISCOVERY_PING") || text.Contains("\"action\":\"ping\"")) {
                     var s = getSettings();
                     var pcIp = !string.IsNullOrWhiteSpace(s.PcIp) && s.PcIp != "127.0.0.1" && s.PcIp != "0.0.0.0"
@@ -113,7 +174,7 @@ public sealed class WifiDiscoveryService : IDisposable {
     }
 
     private async Task BroadcastLoop(CancellationToken ct) {
-        var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, DiscoveryPort);
+        var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, port);
         while (!ct.IsCancellationRequested && udp != null) {
             try {
                 var s = getSettings();

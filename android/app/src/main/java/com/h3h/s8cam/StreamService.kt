@@ -21,6 +21,7 @@ class StreamService : Service() {
     private var retryCount = 0
     private var settings = StreamSettings()
     private var accessory: UsbAccessory? = null
+    private var lastPcHeartbeat = SystemClock.elapsedRealtime()
     private var started = 0L
     private var previousTime = 0L
     private var previousFrames = 0L
@@ -165,6 +166,11 @@ class StreamService : Service() {
     private fun startPipeline(g: Int) {
         if (!alive || generation != g) return
         try {
+            if (wake == null) wake = getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "S8Cam::stream").apply { acquire() }
+            if (settings.transport == "wifi" && wifi == null) wifi =
+                (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager)
+                    .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "S8Cam::wifi").apply { acquire() }
             val s = when (settings.transport) {
                 "direct" -> AoaH264Sender(this, accessory ?: error("USB Direct accessory не подключён"),
                     settings.codec, { camera?.requestIdr() }) { command -> worker.post { applyDirectCommand(command, g) } }
@@ -172,7 +178,7 @@ class StreamService : Service() {
                 else -> RtpH264Sender(settings.ip, settings.port, settings.bitrate, settings.codec,
                     { camera?.requestIdr() },
                     { value -> camera?.setBitrate(value) == true },
-                    { command -> worker.post { applyLiveCommand(command) } })
+                    { command -> worker.post { applyLiveCommand(command) } }, settings.sessionId)
             }
             sender = s; s.start()
             camera = CameraStreamer(this, settings, { message -> worker.post { recover(g, message) } }) { data, _, _, pts ->
@@ -182,6 +188,14 @@ class StreamService : Service() {
     }
     private fun applyLiveCommand(command: JSONObject) {
         if (!alive) return
+        lastPcHeartbeat = SystemClock.elapsedRealtime()
+        if (settings.transport == "wifi" && settings.sessionId.isNotEmpty()) {
+            when (command.optString("command")) {
+                "STOP_STREAM" -> { stopSelf(); return }
+                "HEARTBEAT" -> return
+                "START_STREAM", "SET_CONTROLS" -> { applyDirectCommand(command, generation); return }
+            }
+        }
         when (command.optString("command")) {
             "TAP_FOCUS" -> {
                 val fx = command.optDouble("x", 0.5).toFloat()
@@ -280,6 +294,12 @@ class StreamService : Service() {
             val codecChanged = current.codec != next.codec
 
             settings = next
+            if (codecChanged && settings.transport == "wifi") {
+                generation++
+                stopPipeline()
+                startPipeline(generation)
+                return
+            }
             val activeSender = sender ?: return
 
             // Recreate pipeline only when hardware format/lens actually changes
@@ -312,6 +332,10 @@ class StreamService : Service() {
         override fun run() {
             if (!alive) return
             val now = SystemClock.elapsedRealtime()
+            if (settings.transport == "wifi" && settings.sessionId.isNotEmpty() && now - lastPcHeartbeat > 30000) {
+                stopSelf()
+                return
+            }
             val seconds = (now - previousTime).coerceAtLeast(1) / 1000.0
             val frames = StreamStats.frames.get(); val bytes = StreamStats.encodedBytes.get(); val sent = StreamStats.sentBytes.get()
             val measured = (frames - previousFrames) / seconds
