@@ -7,6 +7,10 @@ class WifiPairTargetTest {
     private val token = "0123456789abcdef0123456789abcdef"
     @Test fun parsesPcInvitation() {
         assertEquals(WifiPairTarget("192.168.1.100", token), WifiPairTarget.parse("h3hcam://wifi?pc=192.168.1.100&token=$token"))
+        val multi = WifiPairTarget.parse("h3hcam://wifi?pc=192.168.1.233&alt=192.168.42.124&dp=5015&token=$token")
+        assertEquals("192.168.1.233", multi.ip)
+        assertEquals(listOf("192.168.42.124"), multi.altIps)
+        assertEquals(5015, multi.discoveryPort)
     }
     @Test fun rejectsForeignMalformedAndOldCodes() {
         listOf("https://wifi?pc=192.168.1.100&token=$token", "h3hcam://wifi?pc=127.0.0.1&token=$token",

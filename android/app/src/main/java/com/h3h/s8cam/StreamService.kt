@@ -1,7 +1,9 @@
 package com.h3h.s8cam
 
+import android.Manifest
 import android.app.*
 import android.content.*
+import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
@@ -14,6 +16,9 @@ class StreamService : Service() {
     private val worker = Handler(workerThread.looper)
     private var camera: CameraStreamer? = null
     private var sender: QueuedSender? = null
+    private var mic: MicStreamer? = null
+    private var audioNetSender: AudioNetSender? = null
+    private var activeAudioConfig = ""
     private var wake: PowerManager.WakeLock? = null
     private var wifi: WifiManager.WifiLock? = null
     @Volatile private var alive = true
@@ -37,7 +42,15 @@ class StreamService : Service() {
     private fun refreshForegroundNotification() {
         val notification = notification()
         if (Build.VERSION.SDK_INT >= 30) {
-            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+            var serviceTypes = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                serviceTypes = serviceTypes or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+            try {
+                startForeground(1, notification, serviceTypes)
+            } catch (_: SecurityException) {
+                startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+            }
         } else {
             startForeground(1, notification)
         }
@@ -80,6 +93,7 @@ class StreamService : Service() {
                 val fpsChanged = effectiveOldFps != effectiveNewFps
                 val lensChanged = current.cameraKey != next.cameraKey
                 settings = next
+                syncAudioPipeline(next)
                 if ((lensChanged || (fpsChanged && camera?.isLegacy() != true)) && sender != null) {
                     val activeSender = sender!!
                     camera?.stop()
@@ -99,6 +113,7 @@ class StreamService : Service() {
         catch (e: Exception) { StreamStats.state = e.message ?: "Неверные настройки"; stopSelf(); return START_NOT_STICKY }
         worker.post {
             if (!alive) return@post
+            refreshForegroundNotification()
             val current = settings
             val canHotUpdate = camera != null &&
                 current.cameraKey == next.cameraKey &&
@@ -112,6 +127,7 @@ class StreamService : Service() {
 
             if (canHotUpdate) {
                 settings = next
+                syncAudioPipeline(next)
                 camera?.setBitrate(next.bitrate)
                 camera?.updateControls(next)
                 StreamStats.controls = "Параметры обновлены на лету. "
@@ -127,6 +143,7 @@ class StreamService : Service() {
 
             if (canLiveSwitchLens) {
                 settings = next
+                syncAudioPipeline(next)
                 val activeSender = sender!!
                 camera?.stop()
                 camera = CameraStreamer(this, next, { message -> worker.post { recover(generation, message) } }) { data, _, _, pts ->
@@ -153,11 +170,47 @@ class StreamService : Service() {
             startPipeline(generation)
             worker.removeCallbacks(tick); worker.postDelayed(tick, 1000)
         }
-        // On modern Android camera access must originate from a visible activity.
         return START_NOT_STICKY
     }
+
+    private fun stopAudioPipeline() {
+        try { mic?.stop() } catch (_: Exception) {}
+        mic = null
+        try { audioNetSender?.close() } catch (_: Exception) {}
+        audioNetSender = null
+        activeAudioConfig = ""
+    }
+
+    private fun syncAudioPipeline(cfg: StreamSettings) {
+        if (!cfg.audioEnabled) {
+            stopAudioPipeline()
+            return
+        }
+        val key = "${cfg.transport}:${cfg.ip}:${cfg.audioPort}:${cfg.audioSource}:${cfg.audioNoiseSuppression}"
+        if (mic != null && activeAudioConfig == key) return
+        stopAudioPipeline()
+
+        val net = if (cfg.transport == "direct") null
+            else AudioNetSender(cfg.transport, if (cfg.transport == "usb") "127.0.0.1" else cfg.ip, cfg.audioPort, this)
+        audioNetSender = net
+        val streamer = MicStreamer(this, cfg.audioSource, cfg.audioNoiseSuppression) { pcm, ptsUs, flags ->
+            if (cfg.transport == "direct") {
+                (sender as? AoaH264Sender)?.sendAudio(pcm, ptsUs, flags)
+            } else {
+                net?.send(pcm, ptsUs, flags)
+            }
+        }
+        if (streamer.start()) {
+            mic = streamer
+            activeAudioConfig = key
+        } else {
+            net?.close()
+            audioNetSender = null
+            StreamStats.controls = "Для передачи звука разрешите микрофон на телефоне. "
+        }
+    }
+
     private fun offerVideo(target: QueuedSender, data: ByteArray, pts: Long) {
-        // Keep pacing aligned with the encoder after a live bitrate or lens change.
         val bitrate = StreamStats.targetBitrate
         if (target is RtpH264Sender && bitrate in 1_000_000..80_000_000) target.updateBitrate(bitrate)
         target.offer(data, pts)
@@ -178,14 +231,16 @@ class StreamService : Service() {
                 else -> RtpH264Sender(settings.ip, settings.port, settings.bitrate, settings.codec,
                     { camera?.requestIdr() },
                     { value -> camera?.setBitrate(value) == true },
-                    { command -> worker.post { applyLiveCommand(command) } }, settings.sessionId)
+                    { command -> worker.post { applyLiveCommand(command) } }, settings.sessionId, this, settings.discoveryPort)
             }
             sender = s; s.start()
+            syncAudioPipeline(settings)
             camera = CameraStreamer(this, settings, { message -> worker.post { recover(g, message) } }) { data, _, _, pts ->
                 offerVideo(s, data, pts)
             }.also { it.start() }
         } catch (e: Exception) { recover(g, e.message ?: "Ошибка запуска") }
     }
+
     private fun applyLiveCommand(command: JSONObject) {
         if (!alive) return
         lastPcHeartbeat = SystemClock.elapsedRealtime()
@@ -228,13 +283,18 @@ class StreamService : Service() {
                     shutterSpeedNs = command.optLong("shutterSpeedNs", current.shutterSpeedNs),
                     manualWbKelvin = command.optInt("manualWbKelvin", current.manualWbKelvin),
                     stabilization = command.optBoolean("stabilization", current.stabilization),
-                    stabilizationMode = command.optString("stabilizationMode", current.stabilizationMode)
+                    stabilizationMode = command.optString("stabilizationMode", current.stabilizationMode),
+                    audioEnabled = command.optBoolean("audioEnabled", current.audioEnabled),
+                    audioPort = command.optInt("audioPort", current.audioPort),
+                    audioSource = command.optString("audioSource", current.audioSource),
+                    audioNoiseSuppression = command.optBoolean("audioNoiseSuppression", current.audioNoiseSuppression)
                 )
                 val effectiveOldFps = if (current.powerMode == "saving" || current.fps <= 30) 30 else current.fps
                 val effectiveNewFps = if (next.powerMode == "saving" || next.fps <= 30) 30 else next.fps
                 val fpsChanged = effectiveOldFps != effectiveNewFps
                 val lensChanged = current.cameraKey != newKey
                 settings = next
+                syncAudioPipeline(next)
                 if ((lensChanged || (fpsChanged && camera?.isLegacy() != true)) && camera != null && sender != null) {
                     val activeSender = sender!!
                     camera?.stop()
@@ -250,6 +310,7 @@ class StreamService : Service() {
             }
         }
     }
+
     private fun applyDirectCommand(command: JSONObject, g: Int) {
         if (!alive || generation != g) return
         if (command.optString("command") == "TAP_FOCUS") {
@@ -282,7 +343,11 @@ class StreamService : Service() {
             shutterSpeedNs = command.optLong("shutterSpeedNs", current.shutterSpeedNs),
             manualWbKelvin = command.optInt("manualWbKelvin", current.manualWbKelvin),
             stabilization = command.optBoolean("stabilization", current.stabilization),
-            stabilizationMode = command.optString("stabilizationMode", current.stabilizationMode)
+            stabilizationMode = command.optString("stabilizationMode", current.stabilizationMode),
+            audioEnabled = command.optBoolean("audioEnabled", current.audioEnabled),
+            audioPort = command.optInt("audioPort", current.audioPort),
+            audioSource = command.optString("audioSource", current.audioSource),
+            audioNoiseSuppression = command.optBoolean("audioNoiseSuppression", current.audioNoiseSuppression)
         )
         try {
             next.validate()
@@ -301,8 +366,8 @@ class StreamService : Service() {
                 return
             }
             val activeSender = sender ?: return
+            syncAudioPipeline(next)
 
-            // Recreate pipeline only when hardware format/lens actually changes
             if (camera == null || resChanged || codecChanged || lensChanged || (fpsChanged && camera?.isLegacy() != true)) {
                 camera?.stop()
                 camera = CameraStreamer(this, next, { message -> worker.post { recover(g, message) } }) { data, _, _, pts ->
@@ -310,17 +375,18 @@ class StreamService : Service() {
                 }.also { it.start() }
                 StreamStats.state = "USB Direct · камера переконфигурирована"
             } else {
-                // Seamless dynamic update on the fly without stopping camera or dropping frames!
                 camera?.setBitrate(next.bitrate)
                 camera?.updateControls(next)
                 StreamStats.controls = "Параметры USB Direct обновлены на лету. "
             }
         } catch (e: Exception) { StreamStats.state = "USB Direct command: ${e.message}" }
     }
+
     private fun recover(g: Int, message: String) {
         if (!alive || g != generation) return
         generation++
         val next = generation
+        stopAudioPipeline()
         camera?.stop(); camera = null; sender?.close(); sender = null
         StreamStats.codec = "retry"; StreamStats.state = message
         Log.e("S8Cam", message)
@@ -328,6 +394,7 @@ class StreamService : Service() {
         retryCount++
         worker.postDelayed({ startPipeline(next) }, delay)
     }
+
     private val tick = object : Runnable {
         override fun run() {
             if (!alive) return
@@ -351,6 +418,8 @@ class StreamService : Service() {
                 .put("packets", StreamStats.packets.get()).put("dropped", StreamStats.dropped.get())
                 .put("retransmitted", StreamStats.retransmitted.get()).put("nackRequests", StreamStats.nackRequests.get())
                 .put("targetBitrateMbps", StreamStats.targetBitrate / 1e6)
+                .put("audioActive", StreamStats.audioActive).put("audioLevelDb", StreamStats.audioLevelDb)
+                .put("audioPackets", StreamStats.audioPackets.get())
                 .put("elapsed", (now - started) / 1000).put("controls", StreamStats.controls).put("powerMode", settings.powerMode)
             power.keys().forEach { key -> j.put(key, power.get(key)) }
             cpuMonitor.sampleUsage()?.let { j.put("cpuUsagePercent", it) }
@@ -376,7 +445,9 @@ class StreamService : Service() {
             worker.postDelayed(this, 1500)
         }
     }
+
     private fun stopPipeline() {
+        stopAudioPipeline()
         try { camera?.stop() } catch (_: Exception) {}
         camera = null
         try { sender?.close() } catch (_: Exception) {}
@@ -386,6 +457,7 @@ class StreamService : Service() {
         try { wake?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
         wake = null
     }
+
     override fun onDestroy() {
         alive = false
         worker.removeCallbacksAndMessages(null)
@@ -397,5 +469,6 @@ class StreamService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
+
     override fun onBind(intent: Intent?): IBinder? = null
 }

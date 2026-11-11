@@ -4,7 +4,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.atomic.AtomicInteger
 
 object H3HProtocol {
     const val VERSION_1 = 1
@@ -30,6 +29,7 @@ object H3HProtocol {
     const val AUDIO = 17
 
     const val FLAG_IDR = 1
+    const val HEADER_SIZE = 32
     private const val HEADER = 32
     private const val MAX_PAYLOAD = 16 * 1024 * 1024
 
@@ -44,6 +44,17 @@ object H3HProtocol {
 
     private val headerBuffer = ByteArray(HEADER)
     private val headerByteBuffer = ByteBuffer.wrap(headerBuffer).order(ByteOrder.LITTLE_ENDIAN)
+
+    fun encode(message: Message): ByteArray {
+        require(message.payload.size <= MAX_PAYLOAD)
+        val out = ByteArray(HEADER + message.payload.size)
+        val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+        bb.put('H'.code.toByte()).put('3'.code.toByte()).put('H'.code.toByte()).put('C'.code.toByte())
+        bb.putShort(message.version.toShort()).putShort(message.type.toShort()).putInt(message.payload.size)
+            .putInt(message.sequence).putLong(message.timestampUs).putInt(message.flags).putInt(0)
+        System.arraycopy(message.payload, 0, out, HEADER, message.payload.size)
+        return out
+    }
 
     @Synchronized fun write(output: OutputStream, message: Message) {
         require(message.payload.size <= MAX_PAYLOAD)

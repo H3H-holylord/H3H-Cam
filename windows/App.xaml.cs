@@ -6,6 +6,12 @@ public partial class App : Application {
     public static RollingLogger Logger { get; } = new();
 
     protected override void OnStartup(StartupEventArgs e) {
+        for (int i = 0; i < e.Args.Length - 1; i++) {
+            if (string.Equals(e.Args[i], "--instance", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(e.Args[i + 1], out int inst) && inst is >= 1 and <= 8) {
+                Settings.ActiveInstance = inst;
+            }
+        }
         base.OnStartup(e);
         using (var process = System.Diagnostics.Process.GetCurrentProcess()) {
             Processes.PrioritizeVideo(process, message => Logger.Log(message));

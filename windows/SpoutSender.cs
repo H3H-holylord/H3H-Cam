@@ -68,6 +68,26 @@ public sealed unsafe class SpoutSender : IDisposable {
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    private struct D3D11_TEXTURE3D_DESC {
+        public uint Width;
+        public uint Height;
+        public uint Depth;
+        public uint MipLevels;
+        public uint Format;
+        public uint Usage;
+        public uint BindFlags;
+        public uint CPUAccessFlags;
+        public uint MiscFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct D3D11_SUBRESOURCE_DATA {
+        public IntPtr pSysMem;
+        public uint SysMemPitch;
+        public uint SysMemSlicePitch;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     private struct VideoShaderConstants {
         public float SrcW;
         public float SrcH;
@@ -83,8 +103,8 @@ public sealed unsafe class SpoutSender : IDisposable {
         public float Brightness;
         public float Contrast;
         public float Saturation;
-        public float Pad0;
-        public float Pad1;
+        public float LutStrength;
+        public float LutSize;
     }
 
     [DllImport("d3d11.dll", CallingConvention = CallingConvention.StdCall)]
@@ -204,8 +224,8 @@ cbuffer VideoShaderConstants : register(b0) {
     float brightness;
     float contrast;
     float saturation;
-    float pad0;
-    float pad1;
+    float lutStrength;
+    float lutSize;
 };
 
 struct VSOutput {
@@ -240,8 +260,8 @@ cbuffer VideoShaderConstants : register(b0) {
     float brightness;
     float contrast;
     float saturation;
-    float pad0;
-    float pad1;
+    float lutStrength;
+    float lutSize;
 };
 
 struct VSOutput {
@@ -251,6 +271,8 @@ struct VSOutput {
 
 Texture2D<float> texY : register(t0);
 Texture2D<float2> texUV : register(t1);
+Texture3D<float4> lutTex : register(t2);
+SamplerState lutSampler : register(s0);
 
 float3 SampleYuvPixel(int x, int y, int maxW, int maxH) {
     int cx = clamp(x, 0, maxW);
@@ -335,6 +357,13 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
         center = lerp(float3(luma, luma, luma), center, saturation);
     }
 
+    center = saturate(center);
+    if (lutStrength > 0.001f && lutSize >= 2.0f) {
+        float3 uvw = center * ((lutSize - 1.0f) / lutSize) + (0.5f / lutSize);
+        float3 lutCol = lutTex.SampleLevel(lutSampler, uvw, 0.0f).rgb;
+        center = lerp(center, lutCol, saturate(lutStrength));
+    }
+
     return float4(saturate(center), 1.0f);
 }
 ";
@@ -370,6 +399,11 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
     private int currentNv12SrcHeight;
     private IntPtr nv12VertexShader = IntPtr.Zero;
     private IntPtr nv12PixelShader = IntPtr.Zero;
+    private IntPtr lutSampler = IntPtr.Zero;
+    private IntPtr lutTexture3D = IntPtr.Zero;
+    private IntPtr lutSrv3D = IntPtr.Zero;
+    private string loadedLutKey = "";
+    private int loadedLutSize = 0;
     private bool gpuNv12Ready = false;
     public bool GpuNv12Ready => gpuNv12Ready;
 
@@ -537,6 +571,17 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
                     Marshal.Release(nv12PsBlob);
                 }
 
+                var samplerDesc = new D3D11_SAMPLER_DESC {
+                    Filter = 0x15, // D3D11_FILTER_MIN_MAG_MIP_LINEAR
+                    AddressU = 3,  // D3D11_TEXTURE_ADDRESS_CLAMP
+                    AddressV = 3,
+                    AddressW = 3,
+                    ComparisonFunc = 1, // D3D11_COMPARISON_NEVER
+                    MaxLOD = float.MaxValue
+                };
+                var createSampler = (delegate* unmanaged[Stdcall]<IntPtr, in D3D11_SAMPLER_DESC, out IntPtr, int>)devVtbl[23];
+                if (createSampler(device, in samplerDesc, out lutSampler) != 0) lutSampler = IntPtr.Zero;
+
                 gpuNv12Ready = nv12VertexShader != IntPtr.Zero && nv12PixelShader != IntPtr.Zero;
             } catch {
                 gpuNv12Ready = false;
@@ -687,7 +732,9 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
         double saturation = 1.0,
         float wbR = 1.0f,
         float wbG = 1.0f,
-        float wbB = 1.0f) {
+        float wbB = 1.0f,
+        string lutPath = "none",
+        float lutStrength = 0.0f) {
 
         ObjectDisposedException.ThrowIf(disposed, this);
         if(srcW<2 || srcH<2 || ((srcW|srcH)&1)!=0 || nv12.Length < checked(srcW * srcH * 3 / 2))
@@ -704,11 +751,14 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
         if (pendingQueries == frameQueries.Length) { Interlocked.Increment(ref gpuDroppedFrames); return false; }
 
         if (gpuNv12Ready) {
-            RenderNv12OnGpu(nv12, srcW, srcH, sharpness, rotation, flipH, colorProfile, brightness, contrast, saturation, wbR, wbG, wbB);
+            RenderNv12OnGpu(nv12, srcW, srcH, sharpness, rotation, flipH, colorProfile, brightness, contrast, saturation, wbR, wbG, wbB, lutPath, lutStrength);
         } else {
             int neededBgra = srcW * srcH * 4;
             if (bgraBuffer.Length < neededBgra) bgraBuffer = new byte[neededBgra];
             Nv12ToBgra(nv12, bgraBuffer, srcW, srcH);
+            if (!string.IsNullOrWhiteSpace(lutPath) && lutPath != "none" && lutStrength > 0.001f) {
+                CubeLut3D.GetOrLoad(lutPath)?.ApplyBgraFrame(bgraBuffer, srcW, srcH, lutStrength);
+            }
             UploadBgra(bgraBuffer, srcW, srcH, sharpness, flush: false);
         }
 
@@ -924,6 +974,55 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
             throw new InvalidOperationException($"CreateShaderResourceView for sourceSrvUV failed: 0x{hr:X8}");
     }
 
+    private int EnsureLutTexture3D(string? lutPath) {
+        if (string.IsNullOrWhiteSpace(lutPath) || lutPath == "none" || lutSampler == IntPtr.Zero) return 0;
+        if (lutSrv3D != IntPtr.Zero && string.Equals(loadedLutKey, lutPath, StringComparison.OrdinalIgnoreCase)) {
+            return loadedLutSize;
+        }
+        var lut = CubeLut3D.GetOrLoad(lutPath);
+        if (lut == null) return 0;
+
+        if (lutSrv3D != IntPtr.Zero) { Marshal.Release(lutSrv3D); lutSrv3D = IntPtr.Zero; }
+        if (lutTexture3D != IntPtr.Zero) { Marshal.Release(lutTexture3D); lutTexture3D = IntPtr.Zero; }
+        loadedLutKey = "";
+        loadedLutSize = 0;
+
+        IntPtr* devVtbl = *(IntPtr**)device;
+        var createTexture3D = (delegate* unmanaged[Stdcall]<IntPtr, in D3D11_TEXTURE3D_DESC, in D3D11_SUBRESOURCE_DATA, out IntPtr, int>)devVtbl[6];
+        var createSrv = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, out IntPtr, int>)devVtbl[7];
+
+        var desc3D = new D3D11_TEXTURE3D_DESC {
+            Width = (uint)lut.Size,
+            Height = (uint)lut.Size,
+            Depth = (uint)lut.Size,
+            MipLevels = 1,
+            Format = 28, // DXGI_FORMAT_R8G8B8A8_UNORM
+            Usage = 0,   // D3D11_USAGE_DEFAULT
+            BindFlags = 8 // D3D11_BIND_SHADER_RESOURCE
+        };
+
+        fixed (byte* pLut = lut.Rgba3DData) {
+            var initData = new D3D11_SUBRESOURCE_DATA {
+                pSysMem = (IntPtr)pLut,
+                SysMemPitch = (uint)(lut.Size * 4),
+                SysMemSlicePitch = (uint)(lut.Size * lut.Size * 4)
+            };
+            int hr = createTexture3D(device, in desc3D, in initData, out lutTexture3D);
+            if (hr != 0 || lutTexture3D == IntPtr.Zero) return 0;
+        }
+
+        int hrSrv = createSrv(device, lutTexture3D, IntPtr.Zero, out lutSrv3D);
+        if (hrSrv != 0 || lutSrv3D == IntPtr.Zero) {
+            Marshal.Release(lutTexture3D);
+            lutTexture3D = IntPtr.Zero;
+            return 0;
+        }
+
+        loadedLutKey = lut.SourceKey;
+        loadedLutSize = lut.Size;
+        return loadedLutSize;
+    }
+
     private void RenderNv12OnGpu(
         byte[] nv12,
         int srcW,
@@ -937,9 +1036,12 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
         double saturation,
         float wbR,
         float wbG,
-        float wbB) {
+        float wbB,
+        string lutPath = "none",
+        float lutStrength = 0.0f) {
 
         EnsureSourceNv12Textures(srcW, srcH);
+        int activeLutSize = lutStrength > 0.001f ? EnsureLutTexture3D(lutPath) : 0;
 
         IntPtr* ctxVtbl = *(IntPtr**)context;
         var updateSubresource = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, uint, IntPtr, IntPtr, uint, uint, void>)ctxVtbl[48];
@@ -972,7 +1074,9 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
             WbB = wbB,
             Brightness = (float)brightness,
             Contrast = (float)contrast,
-            Saturation = (float)saturation
+            Saturation = (float)saturation,
+            LutStrength = activeLutSize >= 2 ? Math.Clamp(lutStrength, 0f, 1f) : 0f,
+            LutSize = activeLutSize
         };
         updateSubresource(context, constantBuffer, 0, IntPtr.Zero, (IntPtr)(&cbData), (uint)sizeof(VideoShaderConstants), 0);
 
@@ -1009,21 +1113,28 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
         vsSetConstantBuffers(context, 0, 1, &cb);
         psSetConstantBuffers(context, 0, 1, &cb);
 
+        if (lutSampler != IntPtr.Zero) {
+            var psSetSamplers = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, IntPtr*, void>)ctxVtbl[10];
+            IntPtr smp = lutSampler;
+            psSetSamplers(context, 0, 1, &smp);
+        }
+
         var psSetShaderResources = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, IntPtr*, void>)ctxVtbl[8];
-        IntPtr* srvs = stackalloc IntPtr[2];
+        IntPtr* srvs = stackalloc IntPtr[3];
         srvs[0] = sourceSrvY;
         srvs[1] = sourceSrvUV;
-        psSetShaderResources(context, 0, 2, srvs);
+        srvs[2] = activeLutSize >= 2 ? lutSrv3D : IntPtr.Zero;
+        psSetShaderResources(context, 0, 3, srvs);
 
         var draw = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, void>)ctxVtbl[13];
         draw(context, 3, 0);
 
-        IntPtr nullPtr = IntPtr.Zero;
-        IntPtr* nullSrvs = stackalloc IntPtr[2];
+        IntPtr* nullSrvs = stackalloc IntPtr[3];
         nullSrvs[0] = IntPtr.Zero;
         nullSrvs[1] = IntPtr.Zero;
+        nullSrvs[2] = IntPtr.Zero;
         omSetRenderTargets(context, 0, null, IntPtr.Zero);
-        psSetShaderResources(context, 0, 2, nullSrvs);
+        psSetShaderResources(context, 0, 3, nullSrvs);
     }
 
     public static void Nv12ToBgra(byte[] nv12, byte[] bgra, int w, int h) {
@@ -1097,6 +1208,18 @@ float4 Nv12PSMain(VSOutput input) : SV_Target {
         if (nv12VertexShader != IntPtr.Zero) {
             Marshal.Release(nv12VertexShader);
             nv12VertexShader = IntPtr.Zero;
+        }
+        if (lutSrv3D != IntPtr.Zero) {
+            Marshal.Release(lutSrv3D);
+            lutSrv3D = IntPtr.Zero;
+        }
+        if (lutTexture3D != IntPtr.Zero) {
+            Marshal.Release(lutTexture3D);
+            lutTexture3D = IntPtr.Zero;
+        }
+        if (lutSampler != IntPtr.Zero) {
+            Marshal.Release(lutSampler);
+            lutSampler = IntPtr.Zero;
         }
         if (sourceSrv != IntPtr.Zero) {
             Marshal.Release(sourceSrv);

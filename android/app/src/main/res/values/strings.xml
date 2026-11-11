@@ -8,6 +8,9 @@
     <string name="camera_allowed">● Camera permission granted</string>
     <string name="camera_permission_needed">● Allow camera access once</string>
     <string name="camera_permission_error">Camera permission is required for streaming</string>
+    <string name="mic_allow">ALLOW MICROPHONE</string>
+    <string name="mic_allowed">● Microphone permission granted (controlled by Windows)</string>
+    <string name="mic_optional">○ Microphone optional — grant access to stream phone audio</string>
     <string name="camera_catalog_summary">Windows will see: %1$d modules, %2$d modes, %3$d modes with 60 FPS.</string>
     <string name="ready_hint">Ready · open H3H Cam on your computer</string>
     <string name="stop">STOP</string>
@@ -51,4 +54,5 @@
     <string name="qr_invalid">This is not a valid H3H Cam QR. Update the Windows client and show a new code.</string>
     <string name="qr_confirm">Connect the camera to the PC at %1$s? Windows controls the settings. USB debugging is not required.</string>
     <string name="wifi_use_qr">Found PC %1$s. To connect, show its QR code on Windows and tap Scan QR here.</string>
+    <string name="wifi_eperm_hint">Wi-Fi access is blocked by phone settings (EPERM). Open Phone Settings → Apps → H3H Cam → Network / Data usage and allow Wi-Fi (on Vivo: iManager → Traffic management → Network control), or disable "Block connections without VPN" in VPN settings.</string>
 </resources>

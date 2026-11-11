@@ -65,6 +65,10 @@ class AoaH264Sender(
         sequence.incrementAndGet(), android.os.SystemClock.elapsedRealtimeNanos() / 1000, 0, json.toByteArray()))
     private fun send(message: H3HProtocol.Message) = synchronized(writeLock) { H3HProtocol.write(output, message) }
     fun sendTelemetry(json: String) = sendJson(H3HProtocol.TELEMETRY, json)
+    fun sendAudio(pcm: ByteArray, ptsUs: Long, flags: Int) {
+        send(H3HProtocol.Message(H3HProtocol.AUDIO, sequence.incrementAndGet(), ptsUs, flags, pcm))
+        StreamStats.audioPackets.incrementAndGet()
+    }
 
     override fun disconnect() {
         try { descriptor.close() } catch (_: Exception) {}

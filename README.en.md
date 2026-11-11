@@ -1,44 +1,34 @@
 ![H3H Cam](docs/banner.svg)
 
-# Your Android phone as a Windows camera
+# Your Android phone as a Studio Camera & Microphone for Windows · 5.0 CineAtelier Studio
 
 [Русский](README.md) · **English**
 
-**H3H Cam** connects an Android phone to Windows for streaming, video calls and recording. Select the camera and video settings on your computer; the phone captures and encodes video with its hardware codec.
+**H3H Cam 5.0** turns an Android phone into a low-latency camera and 48 kHz microphone for streaming, OBS Studio, video calls and recording. All camera, color and audio controls live on Windows while the phone captures and hardware-encodes video.
 
-[**Download the full Portable 4.0.13**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.13/H3H-Cam-4.0.13-Portable.zip) · [Quick start](docs/QUICKSTART.en.md) · [Report a problem](https://github.com/H3H-holylord/H3H-Cam/issues)
+[**Download full Portable 5.0.0**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.0/H3H-Cam-5.0.0-Portable.zip) · [Quick start](docs/QUICKSTART.en.md) · [Report a problem](https://github.com/H3H-holylord/H3H-Cam/issues)
+
+## New in 5.0 (CineAtelier Studio)
+
+- **Dual Studio Personas + Mini Controller**: switch on the fly between **Cine Rig** (dark broadcast monitor) and **Nordic Atelier** (warm tactile light mode), or collapse into a compact always-on-top **Mini Controller**.
+- **Smart Privacy Slate**: replace live video instantly with a studio card, blurred freeze-frame, custom image or black frame without dropping the stream.
+- **Phone Microphone Bridge (48 kHz / 16-bit PCM)**: stream phone audio over USB (ADB TCP), USB Direct (AOA) and Wi-Fi (UDP) with source selection, noise suppression, `-24…+24 dB` gain, `0…500 ms` sync delay, live VU meter, Windows audio output routing and `.mp4` muxing.
+- **Cinema Color & Scopes**: `.cube` 3D LUT loader + built-in film looks, live **Waveform / RGB Parade / Histogram** scopes, **False Color** exposure assist and smooth **A↔B Focus Pull**.
+- **OBS WebSocket v5 & Multi-Cam**: live ON-AIR Tally border, background scene eco-throttling, audio mute sync, and one-click **Camera #2** multi-instance support with custom Spout2 channel names.
+- **Upgraded Wi-Fi Discovery & VPN Bypass**: direct LAN phone discovery via **FIND** without ADB, `TRANSPORT_WIFI` socket binding to bypass active phone VPNs, TCP QR pairing fallback, PC NIC selector and built-in Wi-Fi APK sharing.
 
 ## Start here
 
-For Wi-Fi without USB debugging, update both apps (Windows 4.0.13 / Android 4.0.7), click **Wi-Fi: show QR code** on Windows, tap **SCAN QR (WI-FI)** on Android and confirm **START**. The PC receives the camera list and sends compatible settings. Both devices must share the same LAN; Ethernet on the PC is fine. For a cable connection use **Connect and start** and follow the built-in USB steps.
+1. Extract the **entire** Portable ZIP to a folder and run `H3HCam Receiver.exe` (keep `tools` and `models` next to the EXE).
+2. Install `H3H-Cam-5.0.0.apk` on your phone and grant **Camera** and **Microphone** permissions (via `Install-on-phone.cmd` over USB or via the built-in Wi-Fi APK QR link).
+3. **USB**: select **USB · via ADB → FIND → START**.
+   **Wi-Fi (no cable)**: open `H3H Cam 5.0` on the phone on the same LAN, select **Wi-Fi · RTP → FIND → START** (or use **QR Wi-Fi**).
+4. Enable **Virtual camera** for OBS, Zoom or Discord, and toggle **🎙️ MIC** to route phone microphone audio.
 
-1. Extract the **entire** Portable ZIP to a folder and run `H3HCam Receiver.exe`. Keep `tools` and `models` next to the EXE. .NET, FFmpeg, FFplay and ADB are included; leave tool paths empty.
-2. Install `H3H-Cam-4.0.7.apk` on your phone, open it and allow camera access. You can transfer the APK to the phone and open it there, or enable USB debugging and use `Install-on-phone.cmd` with one authorized phone connected.
-3. In Windows select **USB · via ADB**, press **FIND**, choose a camera, then **START**. Confirm the debugging prompt on the phone. Some phones need their manufacturer's Windows USB driver.
-4. Enable **Virtual camera**. In OBS add a **Video Capture Device** source and choose the camera name shown in H3H Cam's status. Zoom and Discord can use the same camera. OBS itself is not required for video calls.
+## Downloads
 
-Select **English**, **Русский** or **Automatic** from the language picker at the top of either app. Automatic uses Russian on a Russian system and English otherwise. Each device remembers its choice; changing it does not restart the stream.
+[Full Portable 5.0.0](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.0/H3H-Cam-5.0.0-Portable.zip) · [Android APK 5.0.0](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.0/H3H-Cam-5.0.0.apk) · [SHA256SUMS.txt](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.0/SHA256SUMS.txt)
 
-## Features
-
-- Hardware H.264 / HEVC encoding, adjustable resolution, bitrate and 30/60 FPS where supported. 1080p60 has been tested on Samsung Note9; availability depends on Camera2 and the phone firmware.
-- 2560×1440 / QHD: native capture or GPU downscaling from a larger supported 16:9 source on the phone. The client shows the actual capture source and available FPS; this does not upscale 1080p to QHD.
-- USB via ADB reverse, Wi-Fi over RTP/UDP and USB Direct/AOA with a compatible phone and WinUSB driver. USB Direct is not a universal USB UVC device.
-- Camera module selection, focus, exposure, white balance, zoom, stabilization and automatic framing where available.
-- Optional preview, virtual camera output and Spout2 output for OBS. Spout2 requires a separate OBS plugin.
-- Background foreground service, screen off while streaming, reconnection, FPS/bitrate and battery statistics.
-- Shared decoder for Spout2 and preview, bounded frame queues and stale-frame dropping to reduce delay under load.
-
-For games, turn off unused previews and effects and leave some GPU capacity available. Camera delay also depends on capture, decoding, transport and game load. Not every phone exposes every resolution or 60 FPS through Camera2. Phone audio is not transmitted; use a separate microphone. Wi-Fi and ADB control are intended for a trusted local network.
-
-## Downloads and development
-
-The full Portable includes the Windows client with .NET, Android APK, FFmpeg/FFplay, ADB with its DLLs, libusb, x64/x86 virtual camera modules, an AI model and instructions. OBS, video-call apps and device drivers are installed separately.
-
-[Android APK 4.0.7](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.13/H3H-Cam-4.0.7.apk) · [Release checksums](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.13/SHA256SUMS.txt)
-
-Source: `android/` for capture/encoding, `windows/` for .NET 8 WPF and output, `tests/` for verification, `docs/` for instructions. On Windows with .NET 8 SDK, run `dotnet publish windows/S8Cam.Receiver.csproj -c Release -r win-x64 --self-contained true` and `dotnet run --project tests -c Release -- unit test-results`. Android needs JDK 17+ and Android SDK API 37: run `gradlew.bat assembleDebug testDebugUnitTest lintDebug` from `android/`. [Detailed build instructions (Russian)](docs/BUILD.md).
-
-**GPL-3.0.** Third-party components retain their own licenses: [THIRD_PARTY.md](THIRD_PARTY.md). Signing keys and personal settings are excluded from source exports. Windows stores settings and logs in `%LOCALAPPDATA%\H3HCam`.
+**GPL-3.0.** Third-party components retain their own licenses: [THIRD_PARTY.md](THIRD_PARTY.md).
 
 Created by [H3H / HolyLord](https://github.com/H3H-holylord).

@@ -8,6 +8,9 @@
     <string name="camera_allowed">● Камера разрешена</string>
     <string name="camera_permission_needed">● Нужно один раз разрешить камеру</string>
     <string name="camera_permission_error">Для передачи нужно разрешение камеры</string>
+    <string name="mic_allow">РАЗРЕШИТЬ МИКРОФОН</string>
+    <string name="mic_allowed">● Микрофон разрешён (управляется из Windows)</string>
+    <string name="mic_optional">○ Микрофон опционален — разрешите для передачи звука</string>
     <string name="camera_catalog_summary">Windows-клиент увидит: %1$d модулей, %2$d режимов, %3$d режимов с 60 FPS.</string>
     <string name="ready_hint">Готово · откройте H3H Cam на компьютере</string>
     <string name="stop">СТОП</string>
@@ -51,4 +54,5 @@
     <string name="qr_invalid">Это не действующий QR H3H Cam. Обновите Windows-клиент и покажите новый код.</string>
     <string name="qr_confirm">Подключить камеру к компьютеру %1$s? Настройки будут заданы в Windows. Отладка USB не нужна.</string>
     <string name="wifi_use_qr">Компьютер %1$s найден. Для подключения покажите QR-код в Windows и нажмите «Сканировать QR» здесь.</string>
+    <string name="wifi_eperm_hint">Доступ приложения к Wi-Fi заблокирован системой телефона (EPERM).\n1) Откройте Настройки телефона → Приложения → H3H Cam → Передача данных / Сетевые подключения и разрешите «Wi-Fi» (на Vivo: iМенеджер → Управление трафиком → Контроль сети).\n2) Если включён VPN, отключите его или снимите галочку «Блокировать соединения без VPN».</string>
 </resources>

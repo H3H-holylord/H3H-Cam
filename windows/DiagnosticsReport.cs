@@ -12,9 +12,9 @@ public static class DiagnosticsReport {
                 if (!string.IsNullOrWhiteSpace(info)) return info.Split('+')[0];
                 var ver = asm.GetName().Version;
                 if (ver != null) return $"{ver.Major}.{ver.Minor}.{ver.Build}";
-                return "4.0.0";
+                return "5.0.0";
             } catch {
-                return "4.0.0";
+                return "5.0.0";
             }
         }
     }
@@ -27,7 +27,7 @@ public static class DiagnosticsReport {
 
         var sb = new StringBuilder();
         sb.AppendLine("================================================================================");
-        sb.AppendLine("                      H3H CAM 4.0 DIAGNOSTICS REPORT");
+        sb.AppendLine("                      H3H CAM 5.0 DIAGNOSTICS REPORT");
         sb.AppendLine($" Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss} | App Version: {AppVersion} | OS: {Environment.OSVersion}");
         sb.AppendLine("================================================================================");
         sb.AppendLine();

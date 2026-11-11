@@ -34,14 +34,19 @@ data class StreamSettings(
     val shutterSpeedNs: Long = 0L,
     val manualWbKelvin: Int = 0,
     val stabilization: Boolean = true,
-    val stabilizationMode: String = "strong"
+    val stabilizationMode: String = "strong",
+    val audioEnabled: Boolean = false,
+    val audioPort: Int = 5004,
+    val audioSource: String = "voice_comm",
+    val audioNoiseSuppression: Boolean = true,
+    val discoveryPort: Int = 5005
 ) {
     val port get() = if (transport == "usb") usbPort else wifiPort
 
     fun validate() {
         require(transport in listOf("wifi", "usb", "direct")) { "Неизвестный режим" }
         require(stabilizationMode in listOf("standard", "strong")) { "Неверный режим стабилизации" }
-        require(wifiPort in 1024..65534 && usbPort in 1024..65535) { "Порты: 1024–65534" }
+        require(wifiPort in 1024..65534 && usbPort in 1024..65535 && audioPort in 1024..65535) { "Порты: 1024–65535" }
         require(fps in 10..60) { "FPS: 10–60" }
         require(width in 320..4096 && height in 240..2160) { "Неверное разрешение" }
         require(bitrate in 1_000_000..80_000_000) { "Битрейт: 1–80 Mbps" }
@@ -52,6 +57,7 @@ data class StreamSettings(
         require(powerMode in listOf("maximum", "balanced", "saving")) { "Неверный Power mode" }
         require(zoom in 0.5f..10.0f) { "Zoom: 0.5–10.0" }
         require(codec in listOf("h264", "hevc")) { "Кодек: h264 или hevc" }
+        require(audioSource in listOf("voice_comm", "camcorder", "unprocessed")) { "Неверный источник микрофона" }
     }
 
     fun save(context: Context) {
@@ -76,7 +82,12 @@ data class StreamSettings(
             .putLong("shutter_speed_ns", shutterSpeedNs)
             .putInt("manual_wb_kelvin", manualWbKelvin)
             .putBoolean("stabilization", stabilization)
-            .putString("stabilization_mode", stabilizationMode).apply()
+            .putString("stabilization_mode", stabilizationMode)
+            .putBoolean("audio_enabled", audioEnabled)
+            .putInt("audio_port", audioPort)
+            .putString("audio_source", audioSource)
+            .putBoolean("audio_ns", audioNoiseSuppression)
+            .putInt("discovery_port", discoveryPort).apply()
     }
 
     fun withIntent(i: Intent): StreamSettings {
@@ -113,7 +124,12 @@ data class StreamSettings(
             shutterSpeedNs = i.getLongExtra("shutter_speed_ns", shutterSpeedNs),
             manualWbKelvin = i.getIntExtra("manual_wb_kelvin", manualWbKelvin),
             stabilization = i.getBooleanExtra("stabilization", stabilization),
-            stabilizationMode = i.getStringExtra("stabilization_mode") ?: stabilizationMode
+            stabilizationMode = i.getStringExtra("stabilization_mode") ?: stabilizationMode,
+            audioEnabled = i.getBooleanExtra("audio_enabled", audioEnabled),
+            audioPort = i.getIntExtra("audio_port", audioPort),
+            audioSource = i.getStringExtra("audio_source") ?: audioSource,
+            audioNoiseSuppression = i.getBooleanExtra("audio_ns", audioNoiseSuppression),
+            discoveryPort = i.getIntExtra("discovery_port", discoveryPort)
         )
     }
 
@@ -149,6 +165,11 @@ data class StreamSettings(
         putExtra("manual_wb_kelvin", manualWbKelvin)
         putExtra("stabilization", stabilization)
         putExtra("stabilization_mode", stabilizationMode)
+        putExtra("audio_enabled", audioEnabled)
+        putExtra("audio_port", audioPort)
+        putExtra("audio_source", audioSource)
+        putExtra("audio_ns", audioNoiseSuppression)
+        putExtra("discovery_port", discoveryPort)
     }
 
     companion object {
@@ -188,7 +209,12 @@ data class StreamSettings(
                 shutterSpeedNs = p.getLong("shutter_speed_ns", 0L),
                 manualWbKelvin = p.getInt("manual_wb_kelvin", 0),
                 stabilization = p.getBoolean("stabilization", true),
-                stabilizationMode = p.getString("stabilization_mode", "strong") ?: "strong"
+                stabilizationMode = p.getString("stabilization_mode", "strong") ?: "strong",
+                audioEnabled = p.getBoolean("audio_enabled", false),
+                audioPort = p.getInt("audio_port", 5004),
+                audioSource = p.getString("audio_source", "voice_comm") ?: "voice_comm",
+                audioNoiseSuppression = p.getBoolean("audio_ns", true),
+                discoveryPort = p.getInt("discovery_port", 5005)
             )
         }
     }

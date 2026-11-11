@@ -21,6 +21,8 @@ import java.util.Locale
 open class MainActivity : androidx.activity.ComponentActivity() {
     private var pairing = false
     private var pairingTarget: WifiPairTarget? = null
+    private var remoteStartSettings: StreamSettings? = null
+    private var phoneBeacon: WifiPhoneBeacon? = null
     private val scanner = registerForActivityResult(com.journeyapps.barcodescanner.ScanContract()) { result ->
         result.contents?.let { openPairing(it) }
     }
@@ -29,6 +31,7 @@ open class MainActivity : androidx.activity.ComponentActivity() {
     private lateinit var root: LinearLayout
     private lateinit var status: TextView
     private lateinit var permission: TextView
+    private lateinit var micPermission: TextView
     private var launchPending = false
     private var commandPending = false
     private var accessoryPending = false
@@ -116,13 +119,20 @@ open class MainActivity : androidx.activity.ComponentActivity() {
         permission = addText(permissionText(), 14f,
             if (hasCameraPermission()) Color.rgb(112, 229, 195) else Color.rgb(245, 184, 92))
         if (!hasCameraPermission()) addButton(getString(R.string.camera_allow)) {
-            requestPermissions(arrayOf(Manifest.permission.CAMERA), 10)
+            requestPermissions(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO), 10)
+        }
+        micPermission = addText(micPermissionText(), 13f,
+            if (hasMicPermission()) Color.rgb(112, 229, 195) else muted)
+        if (!hasMicPermission()) addButton(getString(R.string.mic_allow)) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 11)
         }
 
         val routes = try { CameraCatalog.list(this) } catch (_: Exception) { emptyList() }
         val modeCount = routes.sumOf { it.modes.size }
         val sixtyCount = routes.sumOf { camera -> camera.modes.count { 60 in it.fps } }
-        addText(getString(R.string.camera_catalog_summary, routes.size, modeCount, sixtyCount))
+        val wifiIp = WifiNetBinder.localWifiIpv4(this)
+        val ipLine = if (wifiIp != null) " · Wi-Fi IP: $wifiIp" else ""
+        addText(getString(R.string.camera_catalog_summary, routes.size, modeCount, sixtyCount) + ipLine)
 
         status = addText(if (StreamStats.running) UiLanguage.state(this@MainActivity, StreamStats.state) else
             getString(R.string.ready_hint), 16f, Color.WHITE)
@@ -160,6 +170,18 @@ open class MainActivity : androidx.activity.ComponentActivity() {
             }.setNegativeButton(R.string.cancel, null).show()
     }
 
+    private fun showWifiError(e: Throwable) {
+        val msg = WifiNetBinder.formatError(this, e)
+        status.text = getString(R.string.wifi_search_failed, msg)
+        if (WifiNetBinder.isEperm(e) && !isFinishing && !isDestroyed) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Wi-Fi заблокирован системой (EPERM)")
+                .setMessage(msg)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        }
+    }
+
     private fun connectPairedWifi() {
         val target = pairingTarget ?: return
         pairingTarget = null
@@ -175,10 +197,10 @@ open class MainActivity : androidx.activity.ComponentActivity() {
                         settings.save(this)
                         startForegroundService(settings.applyTo(Intent(this, StreamService::class.java)))
                         status.text = getString(R.string.wifi_started, settings.ip, settings.wifiPort)
-                    } catch (e: Exception) { status.text = getString(R.string.wifi_search_failed, e.message ?: "") }
+                    } catch (e: Exception) { showWifiError(e) }
                 }
             } catch (e: Exception) {
-                ui.post { pairing = false; if (!isFinishing && !isDestroyed) status.text = getString(R.string.wifi_search_failed, e.message ?: "") }
+                ui.post { pairing = false; if (!isFinishing && !isDestroyed) showWifiError(e) }
             }
         }.start()
     }
@@ -190,23 +212,28 @@ open class MainActivity : androidx.activity.ComponentActivity() {
                 java.net.DatagramSocket().apply {
                     broadcast = true
                     soTimeout = 2500
+                    WifiNetBinder.bind(applicationContext, this)
                 }.use { socket ->
-                val pingMsg = "H3HCAM_DISCOVERY_PING " + JSONObject().put("model", Build.MODEL).toString()
-                val pingBytes = pingMsg.toByteArray(Charsets.UTF_8)
-                val broadcastGlobal = java.net.InetAddress.getByName("255.255.255.255")
-                socket.send(java.net.DatagramPacket(pingBytes, pingBytes.size, broadcastGlobal, 5005))
+                val pingObj = JSONObject()
+                    .put("model", Build.MODEL ?: "Android")
+                    .put("manufacturer", Build.MANUFACTURER ?: "Android")
+                    .put("phone_port", WifiPhoneBeacon.PHONE_PORT)
+                WifiNetBinder.localWifiIpv4(applicationContext)?.let { pingObj.put("phone_ip", it) }
+                val pingBytes = ("H3HCAM_DISCOVERY_PING " + pingObj.toString()).toByteArray(Charsets.UTF_8)
 
-                // Also send to subnet directed broadcast
-                try {
-                    val wm = applicationContext.getSystemService(WIFI_SERVICE) as? android.net.wifi.WifiManager
-                    val dhcp = wm?.dhcpInfo
-                    if (dhcp != null && dhcp.ipAddress != 0) {
-                        val broadcastInt = (dhcp.ipAddress and dhcp.netmask) or dhcp.netmask.inv()
-                        val quads = ByteArray(4) { i -> ((broadcastInt shr (i * 8)) and 0xFF).toByte() }
-                        val subnetBroadcast = java.net.InetAddress.getByAddress(quads)
-                        socket.send(java.net.DatagramPacket(pingBytes, pingBytes.size, subnetBroadcast, 5005))
+                var sentOk = false
+                var sendErr: Exception? = null
+                for (bcast in WifiNetBinder.wifiBroadcastAddresses(applicationContext)) {
+                    for (pcPort in intArrayOf(5005, 5015, 5025)) {
+                        try {
+                            socket.send(java.net.DatagramPacket(pingBytes, pingBytes.size, bcast, pcPort))
+                            sentOk = true
+                        } catch (ex: Exception) {
+                            sendErr = ex
+                        }
                     }
-                } catch (_: Exception) {}
+                }
+                if (!sentOk && sendErr != null) throw sendErr!!
 
                 val buf = ByteArray(2048)
                 val packet = java.net.DatagramPacket(buf, buf.size)
@@ -221,7 +248,6 @@ open class MainActivity : androidx.activity.ComponentActivity() {
                             val pcName = obj.optString("pc_name", getString(R.string.computer))
                             val rawPcIp = obj.optString("pc_ip", "").trim()
                             val pcIp = if (rawPcIp.isNotEmpty() && rawPcIp != "127.0.0.1" && rawPcIp != "0.0.0.0") rawPcIp else (packet.address.hostAddress ?: "")
-                            val port = obj.optInt("port", 5000)
 
                             ui.post {
                                 if (isFinishing || isDestroyed) return@post
@@ -241,15 +267,24 @@ open class MainActivity : androidx.activity.ComponentActivity() {
                 }
                 ui.post { if (!isFinishing && !isDestroyed) status.text = getString(R.string.wifi_no_response) }
             } catch (e: Exception) {
-                ui.post { if (!isFinishing && !isDestroyed) status.text = getString(R.string.wifi_search_failed, e.message ?: getString(R.string.timeout)) }
+                ui.post {
+                    if (!isFinishing && !isDestroyed) {
+                        if (e is java.net.SocketTimeoutException) status.text = getString(R.string.wifi_no_response)
+                        else showWifiError(e)
+                    }
+                }
             }
         }.start()
     }
 
     private fun hasCameraPermission() =
         checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    private fun hasMicPermission() =
+        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     private fun permissionText() =
         if (hasCameraPermission()) getString(R.string.camera_allowed) else getString(R.string.camera_permission_needed)
+    private fun micPermissionText() =
+        if (hasMicPermission()) getString(R.string.mic_allowed) else getString(R.string.mic_optional)
 
     private fun showBlackScreen() {
         black = true
@@ -298,13 +333,36 @@ open class MainActivity : androidx.activity.ComponentActivity() {
         }
     }
 
+    private fun applyRemoteWifiStart(cfg: StreamSettings) {
+        if (isFinishing || isDestroyed) return
+        if (!hasCameraPermission()) {
+            remoteStartSettings = cfg
+            requestPermissions(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO), 10)
+            return
+        }
+        try {
+            cfg.save(this)
+            startForegroundService(cfg.applyTo(Intent(this, StreamService::class.java)))
+            status.text = getString(R.string.wifi_started, cfg.ip, cfg.wifiPort)
+        } catch (e: Exception) {
+            showWifiError(e)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        if (phoneBeacon == null) {
+            phoneBeacon = WifiPhoneBeacon(applicationContext) { cfg ->
+                ui.post { applyRemoteWifiStart(cfg) }
+            }
+        }
+        phoneBeacon?.start()
         ui.post { startIfReady() }
         ui.post(refresh)
     }
 
     override fun onPause() {
+        phoneBeacon?.stop()
         ui.removeCallbacks(refresh)
         super.onPause()
     }
@@ -336,8 +394,16 @@ open class MainActivity : androidx.activity.ComponentActivity() {
             permission.text = permissionText()
             permission.setTextColor(if (hasCameraPermission()) Color.rgb(112, 229, 195) else Color.rgb(245, 184, 92))
         }
-        if (code == 10 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            if (pairingTarget != null) connectPairedWifi() else startIfReady()
+        if (::micPermission.isInitialized) {
+            micPermission.text = micPermissionText()
+            micPermission.setTextColor(if (hasMicPermission()) Color.rgb(112, 229, 195) else muted)
+        }
+        if (code == 10 && hasCameraPermission()) {
+            val remoteCfg = remoteStartSettings
+            if (remoteCfg != null) {
+                remoteStartSettings = null
+                applyRemoteWifiStart(remoteCfg)
+            } else if (pairingTarget != null) connectPairedWifi() else startIfReady()
         }
         else if (code == 10) {
             launchPending = false

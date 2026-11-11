@@ -29,7 +29,9 @@ internal static class Program {
                 int tab = args.Length > 2 && int.TryParse(args[2], out var t) ? t : 0;
                 int effect = args.Length > 3 && int.TryParse(args[3], out var ef) ? ef : -1;
                 double scroll = args.Length > 4 && double.TryParse(args[4], out var sc) ? sc : 0;
-                Render(args[1], tab, effect, scroll, args.Contains("basic"), args.Contains("compact"));
+                string? theme = args.Contains("nordic") ? StudioThemeManager.NordicAtelier
+                    : (args.Contains("cine") ? StudioThemeManager.CineRig : null);
+                Render(args[1], tab, effect, scroll, args.Contains("basic"), args.Contains("compact"), theme, args.Contains("mini"), args.Contains("demo"));
                 return 0;
             }
             if (args.Length >= 2 && args[0] == "hud") {
@@ -48,10 +50,17 @@ internal static class Program {
         }
     }
 
-    private static void Render(string file, int tab = 0, int effectIndex = -1, double scroll = 0, bool basic = false, bool compact = false) {
+    private static void Render(string file, int tab = 0, int effectIndex = -1, double scroll = 0, bool basic = false, bool compact = false, string? theme = null, bool mini = false, bool demo = false) {
         var app = new App();
         app.InitializeComponent();
+        L.Configure("ru");
         var window = new MainWindow();
+        if (window.FindName("LanguageChoice") is System.Windows.Controls.ComboBox langBox) {
+            langBox.SelectedIndex = 1;
+        }
+        if (theme != null) {
+            window.ApplyStudioTheme(theme, persist: false);
+        }
         ((FrameworkElement)window.FindName("BasicPanel")).Visibility = basic ? Visibility.Visible : Visibility.Collapsed;
         ((FrameworkElement)window.FindName("SettingsPanel")).Visibility = basic ? Visibility.Collapsed : Visibility.Visible;
         ((FrameworkElement)window.FindName("ProPresetBar")).Visibility = basic ? Visibility.Collapsed : Visibility.Visible;
@@ -64,9 +73,45 @@ internal static class Program {
             var customPath = window.FindName("CustomBgPathBox") as System.Windows.Controls.TextBox;
             if (customPath != null && effectIndex == 4) customPath.Text = @"C:\Wallpapers\Cyberpunk_Studio.png";
         }
+        if (demo) {
+            int dw = 640, dh = 360;
+            var demoBgra = new byte[dw * dh * 4];
+            for (int y = 0; y < dh; y++) {
+                for (int x = 0; x < dw; x++) {
+                    int idx = (y * dw + x) * 4;
+                    float nx = x / (float)dw;
+                    float ny = y / (float)dh;
+                    float glow = MathF.Exp(-((nx - 0.48f) * (nx - 0.48f) * 6f + (ny - 0.42f) * (ny - 0.42f) * 8f));
+                    demoBgra[idx] = (byte)Math.Clamp((int)(34 + 130 * (1f - nx) + 75 * glow), 0, 255);
+                    demoBgra[idx + 1] = (byte)Math.Clamp((int)(38 + 115 * (1f - ny * 0.6f) + 110 * glow), 0, 255);
+                    demoBgra[idx + 2] = (byte)Math.Clamp((int)(48 + 150 * nx + 130 * glow), 0, 255);
+                    demoBgra[idx + 3] = 255;
+                }
+            }
+            var lut = CubeLut3D.GetOrLoad("builtin:kodak2383");
+            lut?.ApplyBgraFrame(demoBgra, dw, dh, 0.85f);
+            var wb = new WriteableBitmap(dw, dh, 96, 96, PixelFormats.Bgra32, null);
+            wb.WritePixels(new Int32Rect(0, 0, dw, dh), demoBgra, dw * 4, 0);
+            if (window.FindName("LivePreviewImage") is System.Windows.Controls.Image previewImg) previewImg.Source = wb;
+            if (window.FindName("PreviewPlaceholder") is FrameworkElement ph) ph.Visibility = Visibility.Collapsed;
+            if (window.FindName("ResolutionBadgeBorder") is FrameworkElement rb) rb.Visibility = Visibility.Visible;
+            if (window.FindName("PreviewResolutionBadge") is System.Windows.Controls.TextBlock rbt) rbt.Text = "1920×1080 · 60 FPS";
+            var scopeBuf = new byte[VideoScopesRenderer.ScopeWidth * VideoScopesRenderer.ScopeHeight * 4];
+            VideoScopesRenderer.RenderScope(demoBgra, dw, dh, "parade", scopeBuf);
+            var scopeWb = new WriteableBitmap(VideoScopesRenderer.ScopeWidth, VideoScopesRenderer.ScopeHeight, 96, 96, PixelFormats.Bgra32, null);
+            scopeWb.WritePixels(new Int32Rect(0, 0, VideoScopesRenderer.ScopeWidth, VideoScopesRenderer.ScopeHeight), scopeBuf, VideoScopesRenderer.ScopeWidth * 4, 0);
+            if (window.FindName("ScopeImage") is System.Windows.Controls.Image scopeImg) scopeImg.Source = scopeWb;
+            if (window.FindName("ScopeBorder") is FrameworkElement sb) sb.Visibility = Visibility.Visible;
+            if (window.FindName("ScopeTitleText") is System.Windows.Controls.TextBlock st) st.Text = "RGB PARADE · IRE";
+            if (window.FindName("LutPresetChoice") is System.Windows.Controls.ComboBox lc) lc.SelectedIndex = 1;
+        }
+        if (mini) {
+            window.ApplyMiniControllerLayout(true, resizeWindow: false);
+        }
         var content = (FrameworkElement)window.Content;
         ((System.Windows.Controls.Grid)content).Background = window.Background;
-        int renderWidth = compact ? 1000 : 1180, renderHeight = compact ? 680 : 900;
+        int renderWidth = mini ? 600 : (compact ? 1040 : 1240);
+        int renderHeight = mini ? 670 : (compact ? 720 : 900);
         content.Measure(new Size(renderWidth, renderHeight));
         content.Arrange(new Rect(0, 0, renderWidth, renderHeight));
         content.UpdateLayout();
@@ -1026,15 +1071,15 @@ internal static class Program {
 
         // DiagnosticsReport tests
         var reportSettings = new Settings { Width = 1920, Height = 1080, BitrateMbps = 24, Codec = "hevc", OrientationMode = "9:16_crop", SpoutOutput = true };
-        var testDiagStatus = new LiveStatus("streaming", "DEVICE_TEST_4.0", "USB Direct", "1080x1920", 60, 59.9, 24.2, 24.0, 15000, TimeSpan.FromMinutes(5), "ok", "cool", "details", new PowerTelemetry(88, "Discharging", "Battery", 4.15, -450, -420, -1.86, 33.5), 0, 0, 0, 12.0);
+        var testDiagStatus = new LiveStatus("streaming", "DEVICE_TEST_5.0", "USB Direct", "1080x1920", 60, 59.9, 24.2, 24.0, 15000, TimeSpan.FromMinutes(5), "ok", "cool", "details", new PowerTelemetry(88, "Discharging", "Battery", 4.15, -450, -420, -1.86, 33.5), 0, 0, 0, 12.0);
         var diagReport = DiagnosticsReport.Generate(reportSettings, testDiagStatus, null, connMgr);
-        Assert(diagReport.Contains("H3H CAM 4.0 DIAGNOSTICS REPORT"), "diagnostics report title");
-        Assert(diagReport.Contains("DEVICE_TEST_4.0"), "diagnostics report serial");
+        Assert(diagReport.Contains("H3H CAM 5.0 DIAGNOSTICS REPORT"), "diagnostics report title");
+        Assert(diagReport.Contains("DEVICE_TEST_5.0"), "diagnostics report serial");
         Assert(diagReport.Contains("USB Direct"), "diagnostics report transport");
         Assert(diagReport.Contains("1080x1920"), "diagnostics report output dimensions");
         Assert(diagReport.Contains("HEVC"), "diagnostics report codec");
         Assert(diagReport.Contains("H3H Protocol v2"), "diagnostics report protocol version");
-        Assert(diagReport.Contains("App Version: 4.0") && !diagReport.Contains("3.0.0"), "diagnostics report has dynamic 4.0 app version and no 3.0.0");
+        Assert(diagReport.Contains("App Version: 5.0") && !diagReport.Contains("3.0.0"), "diagnostics report has dynamic 5.0 app version and no 3.0.0");
 
         // RollingLogger tests
         using (var testLogger = new RollingLogger()) {
@@ -1201,6 +1246,86 @@ internal static class Program {
         Assert(!testRec.IsRecording && testRec.Elapsed == TimeSpan.Zero, "StreamRecorder initial state idle");
         var stopResult = testRec.Stop();
         Assert(stopResult.Duration == TimeSpan.Zero, "StreamRecorder idle stop returns TimeSpan.Zero");
+
+        // ==================== H3H CAM 5.0 CINEATELIER STUDIO UNIT TESTS ====================
+        // 1. CubeLut3D built-in presets & .cube parser
+        var lutKodak = CubeLut3D.GetOrLoad("builtin:kodak2383");
+        var lutArri = CubeLut3D.GetOrLoad("builtin:arri_warm");
+        var lutNordic = CubeLut3D.GetOrLoad("builtin:nordic_clean");
+        Assert(lutKodak != null && lutKodak.Size == 17 && lutKodak.Rgba3DData.Length == 17 * 17 * 17 * 4, "CubeLut3D built-in Kodak 2383 loaded");
+        Assert(lutArri != null && lutNordic != null, "CubeLut3D built-in ARRI and Nordic presets loaded");
+
+        var sampleCube = """
+            TITLE "Warm Invert Test"
+            LUT_3D_SIZE 2
+            0.1 0.0 0.0
+            1.0 0.1 0.0
+            0.0 0.9 0.0
+            1.0 0.9 0.0
+            0.0 0.0 0.9
+            1.0 0.0 0.9
+            0.0 1.0 0.9
+            0.9 1.0 1.0
+            """;
+        var parsedLut = CubeLut3D.ParseCubeText(sampleCube, "warm_test.cube");
+        Assert(parsedLut.Title == "Warm Invert Test" && parsedLut.Size == 2, "CubeLut3D custom .cube text parse");
+        var lutPixelBuf = new byte[] { 0, 0, 0, 255 }; // BGRA black -> mapped R should become ~0.1 * 255 = 26
+        parsedLut.ApplyBgraFrame(lutPixelBuf, 1, 1, 1.0f);
+        Assert(lutPixelBuf[2] >= 24 && lutPixelBuf[2] <= 27, "CubeLut3D ApplyBgraFrame transforms black corner accurately");
+
+        // 2. VideoScopesRenderer (Waveform, RGB Parade, Histogram)
+        var scopeOut = new byte[VideoScopesRenderer.ScopeWidth * VideoScopesRenderer.ScopeHeight * 4];
+        foreach (var scMode in new[] { "waveform", "parade", "histogram" }) {
+            Array.Clear(scopeOut, 0, scopeOut.Length);
+            VideoScopesRenderer.RenderScope(warmPaper, wbW, wbH, scMode, scopeOut);
+            Assert(scopeOut.Any(b => b > 60 && b < 255), $"VideoScopesRenderer renders active trace in {scMode} mode");
+        }
+
+        // 3. False Color IRE Exposure Map in VideoOverlayProcessor
+        int fcW = 16, fcH = 16;
+        var fcSrc = new byte[fcW * fcH * 4];
+        var fcDst = new byte[fcW * fcH * 4];
+        // ~55 IRE skin-tone gray (~142 luma)
+        for (int i = 0; i < fcSrc.Length; i += 4) { fcSrc[i] = 142; fcSrc[i + 1] = 142; fcSrc[i + 2] = 142; fcSrc[i + 3] = 255; }
+        VideoOverlayProcessor.ProcessFrame(fcSrc, fcDst, fcW, fcH, enablePeaking: false, enableZebra: false, enableFalseColor: true);
+        int centerFc = ((fcH / 2) * fcW + (fcW / 2)) * 4;
+        Assert(fcDst[centerFc + 2] == 242 && fcDst[centerFc + 1] == 128 && fcDst[centerFc] == 165, "False Color maps ~55 IRE skin tone to pink");
+
+        // >= 95 IRE clipping (~250 luma)
+        for (int i = 0; i < fcSrc.Length; i += 4) { fcSrc[i] = 250; fcSrc[i + 1] = 250; fcSrc[i + 2] = 250; fcSrc[i + 3] = 255; }
+        VideoOverlayProcessor.ProcessFrame(fcSrc, fcDst, fcW, fcH, enablePeaking: false, enableZebra: false, enableFalseColor: true);
+        Assert(fcDst[centerFc + 2] == 245 && fcDst[centerFc + 1] == 42 && fcDst[centerFc] == 42, "False Color maps >=95 IRE highlight clip to red");
+
+        // 4. SmartPrivacySlate (Studio Card for Cine Rig & Nordic Atelier, Blurred Freeze, NV12)
+        int slW = 160, slH = 90;
+        var slBgra = new byte[slW * slH * 4];
+        var slNv12 = new byte[slW * slH * 3 / 2];
+        var cineSlateSettings = new Settings { PrivacySlateMode = "studio_card", PrivacySlateTitle = "СКОРО ВЕРНУСЬ", UiTheme = "cine_rig" };
+        SmartPrivacySlate.RenderBgra(slBgra, slW, slH, cineSlateSettings);
+        SmartPrivacySlate.RenderNv12(slNv12, slW, slH, cineSlateSettings);
+        Assert(slBgra[3] == 255 && slNv12.Any(b => b > 20), "SmartPrivacySlate renders Cine Rig studio card in BGRA & NV12");
+
+        var nordicSlateSettings = new Settings { PrivacySlateMode = "studio_card", PrivacySlateTitle = "ПЕРЕРЫВ", UiTheme = "nordic_atelier" };
+        var nordicBgra = new byte[slW * slH * 4];
+        SmartPrivacySlate.RenderBgra(nordicBgra, slW, slH, nordicSlateSettings);
+        Assert(nordicBgra[0] > slBgra[0], "SmartPrivacySlate Nordic Atelier card has lighter background than Cine Rig");
+
+        // 5. OBS WebSocket v5 SHA256 Authentication Challenge/Salt
+        var obsAuth = ObsWebSocketClient.ComputeObsAuthResponse("supersecretpassword", "PZVbYpvAnZut2SS6JNJytDm9", "1633722192+53572118");
+        Assert(!string.IsNullOrWhiteSpace(obsAuth) && obsAuth.Length == 44 && obsAuth.EndsWith("="), "ObsWebSocketClient v5 SHA256 auth hash format");
+        var obsAuthDeterministic = ObsWebSocketClient.ComputeObsAuthResponse("supersecretpassword", "PZVbYpvAnZut2SS6JNJytDm9", "1633722192+53572118");
+        Assert(obsAuth == obsAuthDeterministic, "ObsWebSocketClient v5 SHA256 auth is deterministic");
+
+        // 6. StudioThemeManager dictionary switching & PhoneAudioEngine device enumeration
+        var themeDict = new ResourceDictionary();
+        StudioThemeManager.Apply(StudioThemeManager.CineRig, themeDict);
+        var cineBg = ((SolidColorBrush)themeDict["BgWindowBrush"]).Color;
+        StudioThemeManager.Apply(StudioThemeManager.NordicAtelier, themeDict);
+        var nordicBg = ((SolidColorBrush)themeDict["BgWindowBrush"]).Color;
+        Assert(cineBg.R < 40 && nordicBg.R > 200, "StudioThemeManager switches between dark Cine Rig and light Nordic Atelier");
+
+        var audioDevs = PhoneAudioEngine.GetOutputDevices();
+        Assert(audioDevs != null && audioDevs.Count >= 1 && audioDevs[0].DeviceId == -1, "PhoneAudioEngine enumerates default waveOut mapper device");
 
         File.WriteAllText(Path.Combine(root, "unit.json"), JsonSerializer.Serialize(new {
             devices = devices.Count,

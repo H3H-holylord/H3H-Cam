@@ -11,13 +11,20 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
     private readonly Process? decoder;
     private readonly CancellationTokenSource stop;
     private readonly Task? pump;
+    private readonly Task? slatePump;
     private Settings settings;
+    private readonly object slateLock = new();
+    private byte[]? lastRawFrame;
+    private byte[]? cachedLiveBgra;
+    private int lastRawW, lastRawH;
+    private bool cachedBgraDirty;
     private readonly long startedAt=Environment.TickCount64;
     private long lastPublishedAt=Environment.TickCount64;
     public bool Stalled => decoder!=null && !Volatile.Read(ref settings).PrivacyMute &&
         Environment.TickCount64-startedAt>8000 && Environment.TickCount64-Interlocked.Read(ref lastPublishedAt)>3000;
     public long SpoutFrames => spout?.Frames ?? 0;
     public long GpuDroppedFrames => spout?.GpuDroppedFrames ?? 0;
+    public string SpoutChannel => spout?.SenderName ?? "";
     public int? DecoderProcessId => decoder?.Id;
     public event Action? FramePublished;
     private long frames;
@@ -33,14 +40,17 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
     private volatile bool previewEnabled;
     private readonly LatestFramePreview? previewWorker;
     public bool CanSharePreview => decoder != null && Alive;
-    public bool RequiresFormatChange(Settings next) => isBgra != RequiresBgra(next,spout?.GpuNv12Ready==true);
+    public bool RequiresFormatChange(Settings next) =>
+        isBgra != RequiresBgra(next, spout?.GpuNv12Ready == true) ||
+        (next.SpoutOutput && spout != null && !string.Equals(spout.SenderName, string.IsNullOrWhiteSpace(next.SpoutChannelName) ? "H3HCam" : next.SpoutChannelName.Trim(), StringComparison.Ordinal));
     private static bool RequiresBgra(Settings s,bool nv12GpuReady) {
+        bool has3dLut = !string.IsNullOrWhiteSpace(s.LutPath) && s.LutPath != "none" && s.LutStrength > 0.001f;
         bool wb=StudioEffectsProcessor.HasColorAdjustment("none",0,1,1,s.WbRedGain,s.WbGreenGain,s.WbBlueGain);
         bool color=StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile,s.Brightness,s.Contrast,s.Saturation,
-            s.WbRedGain,s.WbGreenGain,s.WbBlueGain);
-        // Keep the RGB effects/WB/alpha contract when both outputs are enabled.
-        // Neutral NV12 and Spout-only GPU grading can avoid full-size RGB copies.
-        return (s.VirtualCamera&&wb) || (s.SpoutOutput&&(!nv12GpuReady || s.BackgroundEffect!="none" ||
+            s.WbRedGain,s.WbGreenGain,s.WbBlueGain,s.LutPath,s.LutStrength);
+        // Keep the RGB effects/WB/3D-LUT/alpha contract when VirtualCamera needs RGB grading.
+        // Neutral NV12 and Spout-only GPU grading (including GPU Texture3D LUT!) avoid full-size RGB copies.
+        return (s.VirtualCamera&&(wb||has3dLut)) || (s.SpoutOutput&&(!nv12GpuReady || s.BackgroundEffect!="none" ||
             s.SkinSmoothing || (s.VirtualCamera&&color)));
     }
     public event Action<byte[], int, int>? PreviewFrame;
@@ -57,8 +67,9 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
 
         if (settings.SpoutOutput) {
             try {
-                spout = new SpoutSender("H3HCam", finalDim.Width, finalDim.Height);
-                log(L.Format("s_9431df0be068", finalDim.Width, finalDim.Height));
+                var chName = string.IsNullOrWhiteSpace(settings.SpoutChannelName) ? "H3HCam" : settings.SpoutChannelName.Trim();
+                spout = new SpoutSender(chName, finalDim.Width, finalDim.Height);
+                log(L.Format("s_9431df0be068", finalDim.Width, finalDim.Height) + $" [{chName}]");
             } catch (Exception ex) {
                 log(L.Get("s_67543833b1ed") + ex.Message);
             }
@@ -99,6 +110,10 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
         );
 
         try {
+            // When constructed while PrivacyMute is off, BuildVideoFilter has no black drawbox;
+            // if constructed while PrivacyMute is already on, construct decoder without black drawbox so resume is instant!
+            var decodeSettings = settings.Clone();
+            decodeSettings.PrivacyMute = false;
             decoder = Processes.Start(settings.FfmpegPath, [
                 "-hide_banner", "-loglevel", "warning", "-nostdin",
                 // nobuffer discards the IDR consumed during SDP probing, breaking HEVC references.
@@ -109,7 +124,7 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                 "-buffer_size", "16777216", "-max_delay", "30000", "-reorder_queue_size", "256",
                 "-i", sdp,
                 "-map", "0:v:0", "-an",
-                "-vf", settings.BuildVideoFilter(outDim.Width, outDim.Height,nv12Limited601:!isBgra),
+                "-vf", decodeSettings.BuildVideoFilter(outDim.Width, outDim.Height,nv12Limited601:!isBgra),
                 "-pix_fmt", pixFmt,
                 "-fps_mode", "passthrough",
                 "-f", "rawvideo", "-y", pipePath
@@ -118,6 +133,7 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
             previewWorker=new LatestFramePreview(outDim.Width,outDim.Height,previewDim.Width,previewDim.Height,
                 (frame,w,h)=>{if(previewEnabled&&!Volatile.Read(ref this.settings).PrivacyMute)PreviewFrame?.Invoke(frame,w,h);},log);
             pump = Pump(frameBytes, log);
+            slatePump = SlateLoop(stop.Token);
         } catch {
             stop.Cancel();
             Processes.Kill(decoder);
@@ -152,6 +168,20 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                 var s = Volatile.Read(ref settings);
                 var outDim = s.OutputDimensions;
                 bool published=false;
+
+                // Снимок последнего кадра (раз в 12 кадров) для размытой шторки приватности (blurred_freeze)
+                if ((Interlocked.Read(ref frames) % 12) == 0) {
+                    lock (slateLock) {
+                        if (lastRawFrame == null || lastRawFrame.Length != frame.Length) {
+                            lastRawFrame = new byte[frame.Length];
+                        }
+                        Buffer.BlockCopy(frame, 0, lastRawFrame, 0, frame.Length);
+                        lastRawW = outDim.Width;
+                        lastRawH = outDim.Height;
+                        cachedBgraDirty = true;
+                    }
+                }
+
                 // Copy the untouched source into a bounded preview mailbox. Scaling and
                 // UI callbacks run separately; they cannot stall OBS/virtual-camera output.
                 if (previewEnabled && PreviewFrame != null) previewWorker?.Submit(frame);
@@ -187,7 +217,9 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                             cpuColorApplied ? 1.0 : s.Saturation,
                             (float)s.WbRedGain,
                             (float)s.WbGreenGain,
-                            (float)s.WbBlueGain);
+                            (float)s.WbBlueGain,
+                            s.LutPath,
+                            s.LutStrength);
                         if (ok) published = true;
                     }
 
@@ -209,14 +241,15 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
                     }
                 } else {
                     bool hasEffects = s.BackgroundEffect != "none" || s.SkinSmoothing;
-                    bool hasColor = StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile, s.Brightness, s.Contrast, s.Saturation, s.WbRedGain, s.WbGreenGain, s.WbBlueGain);
+                    bool hasColor = StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile, s.Brightness, s.Contrast, s.Saturation, s.WbRedGain, s.WbGreenGain, s.WbBlueGain, s.LutPath, s.LutStrength);
                     if (hasEffects || hasColor) {
                         StudioEffectsProcessor.ApplyEffects(frame, frame, outDim.Width, outDim.Height,
                             s.BackgroundEffect, s.BackgroundBlurStrength, s.SkinSmoothing,
                             focusNormX: 0.5f, focusNormY: 0.45f,
                             s.ColorProfile, s.Brightness, s.Contrast, s.Saturation,
                             customBgPath: s.CustomBackgroundImage, useAi: s.AiSegmentation, aiEdgeFeather: s.AiEdgeFeather,
-                            wbR: s.WbRedGain, wbG: s.WbGreenGain, wbB: s.WbBlueGain);
+                            wbR: s.WbRedGain, wbG: s.WbGreenGain, wbB: s.WbBlueGain,
+                            lutPath: s.LutPath, lutStrength: s.LutStrength);
                     }
 
                     var finalDim = s.FinalOutputDimensions;
@@ -258,11 +291,86 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
         catch (Exception ex) { if (!stop.IsCancellationRequested) log(L.Get("s_61f56716b8b5") + ex.Message); }
     }
 
+    private async Task SlateLoop(CancellationToken ct) {
+        byte[]? slateBgra = null;
+        byte[]? slateNv12 = null;
+        byte[]? previewSlateBgra = null;
+        try {
+            while (!ct.IsCancellationRequested) {
+                var s = Volatile.Read(ref settings);
+                if (!s.PrivacyMute) {
+                    await Task.Delay(120, ct);
+                    continue;
+                }
+
+                var outDim = s.OutputDimensions;
+                var finalDim = s.FinalOutputDimensions;
+                byte[]? liveBgraForOut = null;
+
+                lock (slateLock) {
+                    if (lastRawFrame != null && lastRawW == outDim.Width && lastRawH == outDim.Height) {
+                        int neededLiveBgra = outDim.Width * outDim.Height * 4;
+                        if (cachedLiveBgra == null || cachedLiveBgra.Length != neededLiveBgra) {
+                            cachedLiveBgra = new byte[neededLiveBgra];
+                            cachedBgraDirty = true;
+                        }
+                        if (cachedBgraDirty) {
+                            if (isBgra && lastRawFrame.Length >= neededLiveBgra) {
+                                Buffer.BlockCopy(lastRawFrame, 0, cachedLiveBgra, 0, neededLiveBgra);
+                            } else if (!isBgra && lastRawFrame.Length >= outDim.Width * outDim.Height * 3 / 2) {
+                                SpoutSender.Nv12ToBgra(lastRawFrame, cachedLiveBgra, outDim.Width, outDim.Height);
+                            }
+                            cachedBgraDirty = false;
+                        }
+                        liveBgraForOut = cachedLiveBgra;
+                    }
+                }
+
+                bool sent = false;
+                if (spout != null) {
+                    int neededBgra = outDim.Width * outDim.Height * 4;
+                    if (slateBgra == null || slateBgra.Length != neededBgra) slateBgra = new byte[neededBgra];
+                    SmartPrivacySlate.RenderBgra(slateBgra, outDim.Width, outDim.Height, s, liveBgraForOut);
+                    if (spout.TryWriteFrame(slateBgra, outDim.Width, outDim.Height, 0f)) sent = true;
+                }
+
+                if (writer != null) {
+                    int neededNv12 = finalDim.Width * finalDim.Height * 3 / 2;
+                    if (slateNv12 == null || slateNv12.Length != neededNv12) slateNv12 = new byte[neededNv12];
+                    byte[]? liveForFinal = (finalDim.Width == outDim.Width && finalDim.Height == outDim.Height) ? liveBgraForOut : null;
+                    SmartPrivacySlate.RenderNv12(slateNv12, finalDim.Width, finalDim.Height, s, liveForFinal);
+                    writer.Write(slateNv12);
+                    sent = true;
+                }
+
+                if (previewEnabled && PreviewFrame != null) {
+                    var pDim = PreviewDecoder.PreviewDimensions(s);
+                    int pBytes = pDim.Width * pDim.Height * 4;
+                    if (previewSlateBgra == null || previewSlateBgra.Length != pBytes) previewSlateBgra = new byte[pBytes];
+                    SmartPrivacySlate.RenderBgra(previewSlateBgra, pDim.Width, pDim.Height, s, null);
+                    PreviewFrame.Invoke(previewSlateBgra, pDim.Width, pDim.Height);
+                }
+
+                if (sent) {
+                    Interlocked.Exchange(ref lastPublishedAt, Environment.TickCount64);
+                    FramePublished?.Invoke();
+                    Interlocked.Increment(ref frames);
+                }
+
+                await Task.Delay(125, ct);
+            }
+        } catch (OperationCanceledException) { }
+        catch { }
+    }
+
     public async ValueTask DisposeAsync() {
         stop.Cancel();
         if (decoder != null) Processes.Kill(decoder);
         pipeServer?.Dispose();
-        try { if (pump != null) await pump; }
+        try {
+            if (pump != null) await pump;
+            if (slatePump != null) await slatePump;
+        }
         finally {
             if(previewWorker!=null)await previewWorker.DisposeAsync();
             decoder?.Dispose();

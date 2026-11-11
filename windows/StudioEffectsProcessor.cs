@@ -156,7 +156,9 @@ public static class StudioEffectsProcessor {
         float aiEdgeFeather = 0.15f,
         float wbR = 1.0f,
         float wbG = 1.0f,
-        float wbB = 1.0f) {
+        float wbB = 1.0f,
+        string? lutPath = null,
+        float lutStrength = 0.0f) {
 
         if (src == null || dst == null || width <= 2 || height <= 2) return;
         int needed = width * height * 4;
@@ -164,17 +166,29 @@ public static class StudioEffectsProcessor {
 
         bool isAiEffect = effect.StartsWith("ai_");
         bool hasEffect = effect is "bokeh" or "spotlight" or "greenscreen" or "studio_dark" || isAiEffect;
-        bool hasColorAdj = HasColorAdjustment(colorProfile, brightness, contrast, saturation, wbR, wbG, wbB);
+        CubeLut3D? activeLut = (!string.IsNullOrWhiteSpace(lutPath) && lutPath != "none" && lutStrength > 0.001f)
+            ? CubeLut3D.GetOrLoad(lutPath)
+            : null;
+        bool hasBaseColorAdj = HasColorAdjustment(colorProfile, brightness, contrast, saturation, wbR, wbG, wbB);
+        bool hasColorAdj = hasBaseColorAdj || activeLut != null;
 
         if (!hasEffect && !skinSmoothing && !hasColorAdj) {
-            Buffer.BlockCopy(src, 0, dst, 0, needed);
+            if (!ReferenceEquals(src, dst)) Buffer.BlockCopy(src, 0, dst, 0, needed);
             return;
         }
 
         int stride = width * 4;
 
         if (!hasEffect && !skinSmoothing) {
-            if (TryApplyChannelLut(src, dst, width, height, colorProfile, brightness, contrast, saturation, wbR, wbG, wbB)) return;
+            if (!hasBaseColorAdj && activeLut != null) {
+                if (!ReferenceEquals(src, dst)) Buffer.BlockCopy(src, 0, dst, 0, needed);
+                activeLut.ApplyBgraFrame(dst, width, height, lutStrength);
+                return;
+            }
+            if (TryApplyChannelLut(src, dst, width, height, colorProfile, brightness, contrast, saturation, wbR, wbG, wbB)) {
+                activeLut?.ApplyBgraFrame(dst, width, height, lutStrength);
+                return;
+            }
             // Profiles with cross-channel luminance/saturation retain their full transform.
             // Ultra-fast color-only path: zero mask calculations, pure parallel color grading
             Parallel.For(0, height, y => {
@@ -185,6 +199,7 @@ public static class StudioEffectsProcessor {
                     byte g = src[idx + 1];
                     byte r = src[idx + 2];
                     ApplyPixelColor(ref r, ref g, ref b, colorProfile, brightness, contrast, saturation, wbR, wbG, wbB);
+                    activeLut?.ApplyPixel(ref r, ref g, ref b, lutStrength);
                     dst[idx] = b;
                     dst[idx + 1] = g;
                     dst[idx + 2] = r;
@@ -419,6 +434,7 @@ public static class StudioEffectsProcessor {
                     }
                 });
             }
+            activeLut?.ApplyBgraFrame(dst, width, height, lutStrength);
         } finally {
             if (rentedBlurred != null) ArrayPool<byte>.Shared.Return(rentedBlurred);
             if (rentedTemp != null) ArrayPool<byte>.Shared.Return(rentedTemp);
@@ -560,8 +576,11 @@ public static class StudioEffectsProcessor {
         double saturation,
         float wbR = 1.0f,
         float wbG = 1.0f,
-        float wbB = 1.0f) {
+        float wbB = 1.0f,
+        string? lutPath = null,
+        float lutStrength = 0.0f) {
         return (!string.IsNullOrEmpty(profile) && profile != "none") ||
+               (!string.IsNullOrWhiteSpace(lutPath) && lutPath != "none" && lutStrength > 0.001f) ||
                Math.Abs(brightness) > 0.001 ||
                Math.Abs(contrast - 1.0) > 0.001 ||
                Math.Abs(saturation - 1.0) > 0.001 ||

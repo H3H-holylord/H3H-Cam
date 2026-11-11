@@ -16,6 +16,7 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
 
     private List<AdbDevice> devices = [];
     private bool ownReverse;
+    private bool ownAudioReverse;
     private string reverseSerial = "";
     private bool? lastBatteryProtectState;
 
@@ -405,12 +406,26 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             if (!existing.Local.Equals(local, StringComparison.OrdinalIgnoreCase))
                 throw new IOException(L.Format("s_85e7601efa0c", remote, existing.Local));
             log(L.Get("s_cfe45c4ff17f") + remote);
-            return;
+        } else {
+            await Command(ct, "reverse", remote, local);
+            ownReverse = true;
+            reverseSerial = Serial;
+            log(L.Format("s_e8428438880b", remote, local));
         }
-        await Command(ct, "reverse", remote, local);
-        ownReverse = true;
-        reverseSerial = Serial;
-        log(L.Format("s_e8428438880b", remote, local));
+
+        var audioRemote = $"tcp:{settings.AudioPort}";
+        var audioExisting = mappings.FirstOrDefault(m =>
+            m.Remote.Equals(audioRemote, StringComparison.OrdinalIgnoreCase) &&
+            (m.Serial.Length == 0 || m.Serial.Equals(Serial, StringComparison.OrdinalIgnoreCase)));
+        if (audioExisting == null) {
+            try {
+                await Command(ct, "reverse", audioRemote, audioRemote);
+                ownAudioReverse = true;
+                if (reverseSerial.Length == 0) reverseSerial = Serial;
+            } catch (Exception ex) {
+                log("ADB audio reverse: " + ex.Message);
+            }
+        }
     }
 
     public async Task StartStream(CancellationToken ct) {
@@ -452,7 +467,11 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             "--el", "shutter_speed_ns", settings.ShutterSpeedNs.ToString(CultureInfo.InvariantCulture),
             "--ei", "manual_wb_kelvin", settings.ManualWbKelvin.ToString(CultureInfo.InvariantCulture),
             "--ez", "stabilization", settings.Stabilization ? "true" : "false",
-            "--es", "stabilization_mode", settings.StabilizationMode
+            "--es", "stabilization_mode", settings.StabilizationMode,
+            "--ez", "audio_enabled", settings.AudioEnabled ? "true" : "false",
+            "--ei", "audio_port", settings.AudioPort.ToString(CultureInfo.InvariantCulture),
+            "--es", "audio_source", settings.AudioSource,
+            "--ez", "audio_ns", settings.AudioNoiseSuppression ? "true" : "false"
         };
         var result = await Command(ct, args.ToArray());
         if (result.Contains("Error:", StringComparison.OrdinalIgnoreCase) ||
@@ -498,7 +517,11 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             "--el", "shutter_speed_ns", nextSettings.ShutterSpeedNs.ToString(CultureInfo.InvariantCulture),
             "--ei", "manual_wb_kelvin", nextSettings.ManualWbKelvin.ToString(CultureInfo.InvariantCulture),
             "--ez", "stabilization", nextSettings.Stabilization ? "true" : "false",
-            "--es", "stabilization_mode", nextSettings.StabilizationMode
+            "--es", "stabilization_mode", nextSettings.StabilizationMode,
+            "--ez", "audio_enabled", nextSettings.AudioEnabled ? "true" : "false",
+            "--ei", "audio_port", nextSettings.AudioPort.ToString(CultureInfo.InvariantCulture),
+            "--es", "audio_source", nextSettings.AudioSource,
+            "--ez", "audio_ns", nextSettings.AudioNoiseSuppression ? "true" : "false"
         };
         await Command(ct, args.ToArray());
     }
@@ -570,13 +593,15 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
                 log("STOP Android: " + ex.Message);
             }
         }
-        if (ownReverse && reverseSerial.Length > 0) {
+        if ((ownReverse || ownAudioReverse) && reverseSerial.Length > 0) {
             try {
-                await Processes.Run(Adb, ["-s", reverseSerial, "reverse", "--remove", $"tcp:{settings.UsbPort}"], ct);
+                if (ownReverse) await Processes.Run(Adb, ["-s", reverseSerial, "reverse", "--remove", $"tcp:{settings.UsbPort}"], ct);
+                if (ownAudioReverse) await Processes.Run(Adb, ["-s", reverseSerial, "reverse", "--remove", $"tcp:{settings.AudioPort}"], ct);
             } catch (Exception ex) {
                 log("ADB reverse cleanup: " + ex.Message);
             } finally {
                 ownReverse = false;
+                ownAudioReverse = false;
                 reverseSerial = "";
             }
         }

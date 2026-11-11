@@ -18,7 +18,9 @@ class RtpH264Sender(
     private val requestKeyframe: () -> Unit,
     private val changeBitrate: (Int) -> Boolean,
     private val onCommand: ((JSONObject) -> Unit)? = null,
-    private val session: String = ""
+    private val session: String = "",
+    private val appContext: android.content.Context? = null,
+    private val discoveryPort: Int = 5005
 ) : QueuedSender(requestKeyframe, codec = codec) {
     constructor(
         ip: String,
@@ -46,6 +48,7 @@ class RtpH264Sender(
         bind(InetSocketAddress(port + 1))
         receiveBufferSize = 64 * 1024
         soTimeout = 1000
+        WifiNetBinder.bind(appContext, this)
     }
     private val controlThread = thread(name = "S8CamRtpControl") { controlLoop() }
     private val packetizer = RtpPacketizer({ bytes ->
@@ -67,6 +70,7 @@ class RtpH264Sender(
         val s = socket ?: DatagramSocket().apply {
             sendBufferSize = 2 * 1024 * 1024
             trafficClass = 0x10
+            WifiNetBinder.bind(appContext, this)
             socket = this
         }
         s.send(DatagramPacket(bytes, bytes.size, address, port))
@@ -82,7 +86,7 @@ class RtpH264Sender(
                 helloAt = android.os.SystemClock.elapsedRealtime()
                 val hello = ("H3HCAM_CONTROL_POLL " + JSONObject().put("token", session).put("revision", revision)
                     .put("telemetry", JSONObject(StreamStats.snapshot))).toByteArray(Charsets.UTF_8)
-                control.send(DatagramPacket(hello, hello.size, address, 5005))
+                control.send(DatagramPacket(hello, hello.size, address, discoveryPort))
             }
             val packet = DatagramPacket(buffer, buffer.size)
             control.receive(packet)

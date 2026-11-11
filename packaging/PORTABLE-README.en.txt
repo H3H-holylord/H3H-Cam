@@ -1,12 +1,12 @@
-H3H Cam 4.0.13 - full Portable for Windows x64
+H3H Cam 5.0.0 (CineAtelier Studio) - full Portable for Windows x64
 
 1. Extract the ENTIRE ZIP into a folder. Do not run the EXE inside the ZIP.
 2. Run H3HCam Receiver.exe. .NET, FFmpeg/FFplay and ADB are included.
-3. Install H3H-Cam-4.0.7.apk on your Android phone and allow camera access.
-   Transfer the APK and open it on Android, or enable USB debugging,
-   connect one authorized phone and run Install-on-phone.cmd.
-4. Without USB debugging: use the same LAN → Wi-Fi: show QR code on Windows →
-   SCAN QR on the phone → START.
+3. Install H3H-Cam-5.0.0.apk on your Android phone and allow camera & microphone access.
+   You can download the APK over Wi-Fi right from the QR dialog, transfer it manually,
+   or enable USB debugging and run Install-on-phone.cmd.
+4. Without USB debugging: open H3H Cam 5.0 on the phone on the same LAN → select Wi-Fi
+   and press FIND on Windows (or click QR Wi-Fi → SCAN QR on the phone) → START.
    Over a cable: approve USB debugging and click Connect and start on Windows.
    Leave tool paths empty. Some phones need a manufacturer's USB driver.
 
@@ -33,7 +33,7 @@ Turn off unused preview windows and heavy effects to reduce game-time load.
 Keep tools and models next to the EXE. The package includes .NET, FFmpeg,
 FFplay, ADB with DLLs, libusb, virtual camera x64/x86, APK and an AI model.
 OBS, video-call apps and device drivers are installed separately.
-Spout2 output requires an OBS plugin. Phone audio is not transmitted.
+Spout2 output requires an OBS plugin. Phone microphone audio (48 kHz PCM) can be enabled in the Sound & OBS tab.
 
 Settings/logs: %LOCALAPPDATA%\H3HCam
 Diagnostics: Collect-Diagnostics.ps1

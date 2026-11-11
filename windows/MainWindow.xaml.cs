@@ -43,16 +43,32 @@ public partial class MainWindow : Window {
     private ThermalGuard? thermalGuard;
     private readonly DispatcherTimer usbWatcherTimer = new() { Interval = TimeSpan.FromSeconds(2.5) };
     private System.Windows.Media.Imaging.WriteableBitmap? previewBitmap;
+    private System.Windows.Media.Imaging.WriteableBitmap? scopeBitmap;
     private PreviewWindow? previewWindow;
     private bool gridEnabled;
     private bool focusPeakingEnabled;
     private bool zebraEnabled;
+    private bool falseColorEnabled;
     private bool faceOverlayEnabled = true;
     private StreamHudWindow? hudWindow;
     private byte[]? processedPreviewBuffer;
     private byte[]? overlayBuffer;
+    private byte[]? lastUnmutedPreviewFrame;
+    private readonly byte[] scopeRenderBuffer = new byte[VideoScopesRenderer.ScopeWidth * VideoScopesRenderer.ScopeHeight * 4];
+    private long lastScopeTickMs;
     private WifiDiscoveryService? wifiDiscovery;
+    private ObsWebSocketClient? obsClient;
+    private ObsLiveState lastObsState = new(false, "", false, false, false, false, "OBS не подключён");
+    private bool obsEcoThrottled;
+    private readonly DispatcherTimer vuMeterTimer = new() { Interval = TimeSpan.FromMilliseconds(65) };
+    private readonly DispatcherTimer focusPullTimer = new() { Interval = TimeSpan.FromMilliseconds(25) };
+    private float focusPullStartDist, focusPullTargetDist;
+    private long focusPullStartTick;
+    private bool focusPullNextIsB = true;
+    private double normalWindowWidth = 1240, normalWindowHeight = 920;
+    private double normalWindowLeft = -1, normalWindowTop = -1;
     private bool lastScanSucceeded;
+    private List<AdbDevice> lastAdbDevices = [];
     private volatile bool previewRenderingVisible;
     private TaskCompletionSource? requestedSnapshotFrame;
     private void UpdatePreviewActivity() {
@@ -74,8 +90,15 @@ public partial class MainWindow : Window {
         filling = true;
         settings = Settings.Load();
         L.Configure(settings.Language);
+        StudioThemeManager.Apply(settings.UiTheme);
         InitializeComponent();
-        Title = "H3H Cam " + typeof(App).Assembly.GetName().Version?.ToString(3);
+        var verStr = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "5.0.0";
+        Title = Settings.ActiveInstance > 1
+            ? $"H3H CAM 5.0 · Камера #{Settings.ActiveInstance} ({verStr})"
+            : $"H3H CAM 5.0 · CineAtelier Studio ({verStr})";
+        if (InstanceBadgeText != null) {
+            InstanceBadgeText.Text = $"5.0 · CAM #{Settings.ActiveInstance}";
+        }
         LanguageChoice.SelectedIndex = settings.Language switch { "ru" => 1, "en" => 2, _ => 0 };
         IsVisibleChanged += (_, _) => UpdatePreviewActivity();
         wbOverlayTimer.Tick += (_, _) => {
@@ -86,26 +109,58 @@ public partial class MainWindow : Window {
             System.Windows.Application.Current.SessionEnding += (_, _) => { forceExit = true; };
         }
         if (settings.WindowWidth >= 800 && settings.WindowHeight >= 600) {
+            normalWindowWidth = settings.WindowWidth;
+            normalWindowHeight = settings.WindowHeight;
             Width = settings.WindowWidth;
             Height = settings.WindowHeight;
         }
-        if (settings.WindowLeft >= 0 && settings.WindowTop >= 0) {
+        if (double.IsFinite(settings.WindowLeft) && double.IsFinite(settings.WindowTop) && settings.WindowLeft >= 0 && settings.WindowTop >= 0) {
+            normalWindowLeft = settings.WindowLeft;
+            normalWindowTop = settings.WindowTop;
             WindowStartupLocation = WindowStartupLocation.Manual;
             Left = settings.WindowLeft;
             Top = settings.WindowTop;
         }
+        obsClient = new ObsWebSocketClient(Log);
+        obsClient.StateChanged += state => Dispatcher.BeginInvoke(() => OnObsStateChanged(state));
+        vuMeterTimer.Tick += (_, _) => UpdateAudioVuMeterUi();
+        focusPullTimer.Tick += (_, _) => StepFocusPullAnimation();
+        RefreshAudioDevicesList(settings.AudioOutputDevice);
         Fill();
         UpdateModeUI();
+        ApplyMiniControllerLayout(settings.MiniControllerMode, resizeWindow: settings.MiniControllerMode);
         UpdateVirtualCamStatus();
+        UpdateTallyAndMonitorBorder();
+        if (!safeMode) {
+            vuMeterTimer.Start();
+            if (settings.ObsWsEnabled) {
+                obsClient.ConfigureAndStart(settings.ObsWsUrl, settings.ObsWsPassword, settings.ObsTargetScene, true);
+            }
+        }
         wifiDiscovery = new WifiDiscoveryService(() => Volatile.Read(ref settings).Clone(), Log);
         wifiDiscovery.PairedTelemetry = (ip, telemetry) => engine?.AcceptWifiTelemetry(ip, telemetry);
         wifiDiscovery.PhoneDiscovered += phone => Dispatcher.BeginInvoke(() => {
             if (closing || closed) return;
             Log(L.Format("s_0c10be76de5c", phone.Model, phone.Ip));
-            if (string.IsNullOrWhiteSpace(PhoneIp.Text) || PhoneIp.Text == "192.168.1.100") {
+            var wasEmptyOrDefault = string.IsNullOrWhiteSpace(PhoneIp.Text) || PhoneIp.Text == "192.168.1.100";
+            if (wasEmptyOrDefault) {
                 PhoneIp.Text = phone.Ip;
-                QueueSave();
+                if (AutoPcIp.IsChecked == true && System.Net.IPAddress.TryParse(phone.Ip, out var pAddr)) {
+                    PcIp.Text = WifiDiscoveryService.ResolveBestLocalIpv4(pAddr);
+                }
             }
+            if (!busy && engine?.Running != true) {
+                var prevFilling = filling;
+                filling = true;
+                try {
+                    var currentSel = (DeviceChoice.SelectedValue as string) ?? "";
+                    var desiredSel = (Transport.SelectedIndex == 1 && (string.IsNullOrEmpty(currentSel) || wasEmptyOrDefault))
+                        ? "wifi:" + phone.Ip
+                        : currentSel;
+                    UpdateDevices(lastAdbDevices, desiredSel);
+                } finally { filling = prevFilling; }
+            }
+            if (wasEmptyOrDefault) QueueSave();
         });
         wifiDiscovery.PairRequested = request => Dispatcher.InvokeAsync(async () => {
             if (closing || closed || busy || engine?.Running == true) throw new InvalidOperationException(L.Get("setup_pc_busy"));
@@ -116,6 +171,7 @@ public partial class MainWindow : Window {
                 settings.PhoneIp = request.Ip;
                 PcIp.Text = WifiDiscoveryService.ResolveBestLocalIpv4(System.Net.IPAddress.Parse(request.Ip));
                 settings.WifiPairSession = request.Token;
+                UpdateDevices(lastAdbDevices, "wifi:" + request.Ip);
                 ApplyCapabilities(request.Capabilities, settings.CameraKey, settings.Width, settings.Height, settings.Fps);
                 DeviceHint.Text = L.Get("setup_wifi_paired");
                 BasicDeviceNameText.Text = request.Capabilities.Model;
@@ -126,6 +182,7 @@ public partial class MainWindow : Window {
             return settings.Clone();
         }).Task.Unwrap();
         if(!safeMode)wifiDiscovery.Start();
+        DeviceChoice.SelectionChanged += DeviceChoice_Changed;
         Transport.SelectionChanged += (_, _) => { if (!filling) UpdateConnectionHelp(); };
         UpdateConnectionHelp();
         LivePreviewImage.SizeChanged += (_, _) => { if (gridEnabled) RedrawGrid(); };
@@ -274,6 +331,8 @@ public partial class MainWindow : Window {
         if (engine?.Running != true && Fps?.SelectedItem is FpsChoice selected && FpsText != null)
             FpsText.Text = $"— / {selected.Value} fps";
         settings = Read();
+        obsClient?.UpdateTargetScene(settings.ObsTargetScene);
+        UpdateQuickMicButtonUI();
         saveTimer.Stop();
         saveTimer.Start();
         if (engine?.Running == true) {
@@ -431,9 +490,106 @@ public partial class MainWindow : Window {
             if (BasicFaceTrackingCheck != null) BasicFaceTrackingCheck.IsChecked = settings.AutoFraming;
             if (BasicStabilizationCheck != null) BasicStabilizationCheck.IsChecked = settings.Stabilization;
             if (BasicSuperSteadyCheck != null) BasicSuperSteadyCheck.IsChecked = settings.StabilizationMode != "standard";
+
+            // 5.0: Темы, 3D LUT, Умная шторка, Видеоскопы, False Color, Focus Pull, Микрофон и OBS WebSocket
+            StudioThemeManager.Apply(settings.UiTheme);
+            UpdateThemeButtonUI();
+
+            if (LutPresetChoice != null && CustomLutPathBox != null && CustomLutPanel != null) {
+                var lp = settings.LutPath ?? "none";
+                switch (lp) {
+                    case "" or "none":
+                        LutPresetChoice.SelectedIndex = 0;
+                        CustomLutPanel.Visibility = Visibility.Collapsed;
+                        break;
+                    case "builtin:kodak2383":
+                        LutPresetChoice.SelectedIndex = 1;
+                        CustomLutPanel.Visibility = Visibility.Collapsed;
+                        break;
+                    case "builtin:arri_warm":
+                        LutPresetChoice.SelectedIndex = 2;
+                        CustomLutPanel.Visibility = Visibility.Collapsed;
+                        break;
+                    case "builtin:nordic_clean":
+                        LutPresetChoice.SelectedIndex = 3;
+                        CustomLutPanel.Visibility = Visibility.Collapsed;
+                        break;
+                    default:
+                        LutPresetChoice.SelectedIndex = 4;
+                        CustomLutPathBox.Text = lp;
+                        CustomLutPanel.Visibility = Visibility.Visible;
+                        break;
+                }
+            }
+            if (LutStrengthSlider != null && LutStrengthText != null) {
+                LutStrengthSlider.Value = Math.Clamp(settings.LutStrength, 0.0f, 1.0f);
+                LutStrengthText.Text = $"{(int)Math.Round(LutStrengthSlider.Value * 100)}%";
+            }
+            UpdateLutBadgeUI();
+
+            if (PrivacySlateModeChoice != null) {
+                PrivacySlateModeChoice.SelectedIndex = (settings.PrivacySlateMode ?? "studio_card") switch {
+                    "blurred_freeze" => 1,
+                    "custom_image" => 2,
+                    "black" => 3,
+                    _ => 0
+                };
+            }
+            if (PrivacySlateTitleBox != null) PrivacySlateTitleBox.Text = string.IsNullOrWhiteSpace(settings.PrivacySlateTitle) ? "СКОРО ВЕРНУСЬ" : settings.PrivacySlateTitle;
+            if (PrivacySlateImageBox != null) PrivacySlateImageBox.Text = settings.PrivacySlateImage ?? "";
+            if (PrivacySlateImagePanel != null) PrivacySlateImagePanel.Visibility = (PrivacySlateModeChoice?.SelectedIndex == 2) ? Visibility.Visible : Visibility.Collapsed;
+
+            UpdateFalseColorUI(settings.FalseColor);
+            if (ScopeModeChoice != null) {
+                ScopeModeChoice.SelectedIndex = (settings.VideoScopeMode ?? "none") switch {
+                    "waveform" => 1,
+                    "parade" => 2,
+                    "histogram" => 3,
+                    _ => 0
+                };
+            }
+            UpdateScopeVisibilityUI(settings.VideoScopeMode);
+
+            if (SetFocusAButton != null) SetFocusAButton.Content = $"A · {settings.FocusSlotA:0.00}";
+            if (SetFocusBButton != null) SetFocusBButton.Content = $"B · {settings.FocusSlotB:0.00}";
+            if (FocusPullSpeedChoice != null) {
+                FocusPullSpeedChoice.SelectedIndex = settings.FocusPullDurationSec switch {
+                    <= 0.5f => 0,
+                    >= 1.2f => 2,
+                    _ => 1
+                };
+            }
+
+            if (AudioEnabledCheck != null) AudioEnabledCheck.IsChecked = settings.AudioEnabled;
+            if (AudioSourceChoice != null) {
+                AudioSourceChoice.SelectedIndex = (settings.AudioSource ?? "voice_comm") switch {
+                    "camcorder" => 1,
+                    "unprocessed" => 2,
+                    _ => 0
+                };
+            }
+            if (AudioNsCheck != null) AudioNsCheck.IsChecked = settings.AudioNoiseSuppression;
+            if (AudioMutedCheck != null) AudioMutedCheck.IsChecked = settings.AudioMuted;
+            if (AudioGainSlider != null) AudioGainSlider.Value = Math.Clamp(settings.AudioGainDb, -24.0, 24.0);
+            if (AudioDelaySlider != null) AudioDelaySlider.Value = Math.Clamp(settings.AudioDelayMs, 0, 500);
+            UpdateAudioSlidersText();
+            if (AudioMonitorCheck != null) AudioMonitorCheck.IsChecked = settings.AudioMonitorEnabled;
+            if (AudioPortBox != null) AudioPortBox.Text = settings.AudioPort.ToString();
+            SelectAudioDeviceInCombo(settings.AudioOutputDevice);
+            UpdateQuickMicButtonUI();
+
+            if (SpoutChannelNameBox != null) SpoutChannelNameBox.Text = string.IsNullOrWhiteSpace(settings.SpoutChannelName) ? "H3HCam" : settings.SpoutChannelName;
+            if (ObsWsEnabledCheck != null) ObsWsEnabledCheck.IsChecked = settings.ObsWsEnabled;
+            if (ObsWsUrlBox != null) ObsWsUrlBox.Text = string.IsNullOrWhiteSpace(settings.ObsWsUrl) ? "ws://127.0.0.1:4455" : settings.ObsWsUrl;
+            if (ObsWsPasswordBox != null && ObsWsPasswordBox.Password != (settings.ObsWsPassword ?? "")) {
+                ObsWsPasswordBox.Password = settings.ObsWsPassword ?? "";
+            }
+            if (ObsTargetSceneBox != null) ObsTargetSceneBox.Text = settings.ObsTargetScene ?? "";
+            if (ObsEcoModeCheck != null) ObsEcoModeCheck.IsChecked = settings.ObsEcoMode;
+            if (ObsAudioInputNameBox != null) ObsAudioInputNameBox.Text = settings.ObsAudioInputName ?? "";
+
             UpdateModeUI();
-            PrivacyMuteButton.Background = settings.PrivacyMute ? new SolidColorBrush(Color.FromRgb(220, 60, 60)) : null;
-            PrivacyMuteButton.Content = settings.PrivacyMute ? "🔒 MUTED" : "🔒 MUTE";
+            UpdatePrivacyMuteUI(settings.PrivacyMute);
             AdbPath.Text = settings.AdbPath;
             FfmpegPath.Text = settings.FfmpegPath;
             FfplayPath.Text = settings.FfplayPath;
@@ -455,13 +611,45 @@ public partial class MainWindow : Window {
     }
 
     private void UpdateDevices(IEnumerable<AdbDevice> found, string selectedSerial) {
+        lastAdbDevices = found.ToList();
         var choices = new List<Choice> { new("", L.Get("s_2a4ac51473d9")) };
-        choices.AddRange(found.Select(d => new Choice(d.Serial, d.Display)));
-        if (!string.IsNullOrWhiteSpace(selectedSerial) && choices.All(x => x.Key != selectedSerial))
-            choices.Add(new Choice(selectedSerial, L.Get("s_9c1cb78c9c48") + selectedSerial));
+        choices.AddRange(lastAdbDevices.Select(d => new Choice(d.Serial, d.Display)));
+        if (wifiDiscovery != null) {
+            foreach (var wp in wifiDiscovery.GetDiscoveredPhones()) {
+                var wifiKey = "wifi:" + wp.Ip;
+                if (choices.All(c => c.Key != wifiKey)) {
+                    choices.Add(new Choice(wifiKey, $"{wp.Model} · Wi-Fi · {wp.Ip}"));
+                }
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(selectedSerial) && choices.All(x => x.Key != selectedSerial)) {
+            var label = selectedSerial.StartsWith("wifi:", StringComparison.OrdinalIgnoreCase)
+                ? $"Android · Wi-Fi · {selectedSerial[5..]}"
+                : L.Get("s_9c1cb78c9c48") + selectedSerial;
+            choices.Add(new Choice(selectedSerial, label));
+        }
         DeviceChoice.ItemsSource = choices;
         DeviceChoice.SelectedValue = selectedSerial;
         if (DeviceChoice.SelectedIndex < 0) DeviceChoice.SelectedIndex = 0;
+    }
+
+    private void DeviceChoice_Changed(object sender, SelectionChangedEventArgs e) {
+        if (filling || settings == null) return;
+        var sel = (DeviceChoice.SelectedValue as string) ?? "";
+        if (sel.StartsWith("wifi:", StringComparison.OrdinalIgnoreCase)) {
+            var ip = sel[5..].Trim();
+            var prevFilling = filling;
+            filling = true;
+            try {
+                if (Transport.SelectedIndex != 1) Transport.SelectedIndex = 1;
+                PhoneIp.Text = ip;
+                if (AutoPcIp.IsChecked == true && System.Net.IPAddress.TryParse(ip, out var pAddr)) {
+                    PcIp.Text = WifiDiscoveryService.ResolveBestLocalIpv4(pAddr);
+                }
+            } finally { filling = prevFilling; }
+            UpdateConnectionHelp();
+        }
+        QueueSave();
     }
 
     private void ApplyCapabilities(PhoneCapabilities? value, string cameraKey, int width, int height, int fps) {
@@ -524,14 +712,77 @@ public partial class MainWindow : Window {
     private Settings Read() {
         var mode = ResolutionChoice.SelectedItem as VideoCapability;
         var fps = (Fps.SelectedItem as FpsChoice)?.Value ?? settings.Fps;
+        var lutPath = LutPresetChoice?.SelectedIndex switch {
+            1 => "builtin:kodak2383",
+            2 => "builtin:arri_warm",
+            3 => "builtin:nordic_clean",
+            4 => string.IsNullOrWhiteSpace(CustomLutPathBox?.Text) ? "none" : CustomLutPathBox.Text.Trim(),
+            _ => "none"
+        };
+        var selectedAudioDev = (AudioDeviceChoice?.SelectedItem as AudioOutputDeviceInfo);
+        var audioDevKey = (selectedAudioDev == null || selectedAudioDev.DeviceId < 0) ? "default" : selectedAudioDev.Name;
         return new Settings {
             Language = LanguageChoice.SelectedIndex switch { 1 => "ru", 2 => "en", _ => "auto" },
+            UiTheme = StudioThemeManager.Normalize(settings.UiTheme),
+            MiniControllerMode = settings.MiniControllerMode,
+            PrivacySlateMode = PrivacySlateModeChoice?.SelectedIndex switch {
+                1 => "blurred_freeze",
+                2 => "custom_image",
+                3 => "black",
+                _ => "studio_card"
+            },
+            PrivacySlateTitle = string.IsNullOrWhiteSpace(PrivacySlateTitleBox?.Text) ? "СКОРО ВЕРНУСЬ" : PrivacySlateTitleBox.Text.Trim(),
+            PrivacySlateImage = PrivacySlateImageBox?.Text?.Trim() ?? "",
+            LutPath = lutPath,
+            LutStrength = LutStrengthSlider != null ? (float)Math.Round(LutStrengthSlider.Value, 2) : settings.LutStrength,
+            VideoScopeMode = ScopeModeChoice?.SelectedIndex switch {
+                1 => "waveform",
+                2 => "parade",
+                3 => "histogram",
+                _ => "none"
+            },
+            FalseColor = falseColorEnabled,
+            FocusSlotA = settings.FocusSlotA,
+            FocusSlotB = settings.FocusSlotB,
+            FocusPullDurationSec = FocusPullSpeedChoice?.SelectedIndex switch {
+                0 => 0.40f,
+                2 => 1.50f,
+                _ => 0.80f
+            },
+            AudioEnabled = AudioEnabledCheck?.IsChecked == true,
+            AudioPort = int.TryParse(AudioPortBox?.Text, out var ap) ? ap : settings.AudioPort,
+            AudioSource = AudioSourceChoice?.SelectedIndex switch {
+                1 => "camcorder",
+                2 => "unprocessed",
+                _ => "voice_comm"
+            },
+            AudioNoiseSuppression = AudioNsCheck?.IsChecked != false,
+            AudioGainDb = AudioGainSlider != null ? Math.Round(AudioGainSlider.Value, 1) : 0.0,
+            AudioMuted = AudioMutedCheck?.IsChecked == true,
+            AudioMonitorEnabled = AudioMonitorCheck?.IsChecked != false,
+            AudioDelayMs = AudioDelaySlider != null ? (int)Math.Round(AudioDelaySlider.Value) : 45,
+            AudioOutputDevice = audioDevKey,
+            SpoutChannelName = string.IsNullOrWhiteSpace(SpoutChannelNameBox?.Text) ? "H3HCam" : SpoutChannelNameBox.Text.Trim(),
+            ObsWsEnabled = ObsWsEnabledCheck?.IsChecked == true,
+            ObsWsUrl = string.IsNullOrWhiteSpace(ObsWsUrlBox?.Text) ? "ws://127.0.0.1:4455" : ObsWsUrlBox.Text.Trim(),
+            ObsWsPassword = ObsWsPasswordBox?.Password ?? settings.ObsWsPassword,
+            ObsTargetScene = ObsTargetSceneBox?.Text?.Trim() ?? "",
+            ObsAudioInputName = ObsAudioInputNameBox?.Text?.Trim() ?? "",
+            ObsEcoMode = ObsEcoModeCheck?.IsChecked == true,
+            WindowWidth = normalWindowWidth,
+            WindowHeight = normalWindowHeight,
+            WindowLeft = normalWindowLeft,
+            WindowTop = normalWindowTop,
             Transport = TransportValue(Transport.SelectedIndex),
             WifiPairSession = Transport.SelectedIndex == 1 && PhoneIp.Text.Trim() == settings.PhoneIp ? settings.WifiPairSession : "",
-            PhoneIp = PhoneIp.Text.Trim(),
+            PhoneIp = ((DeviceChoice.SelectedValue as string)?.StartsWith("wifi:", StringComparison.OrdinalIgnoreCase) == true)
+                ? ((string)DeviceChoice.SelectedValue)[5..].Trim()
+                : PhoneIp.Text.Trim(),
             PcIp = PcIp.Text.Trim(),
             AutoPcIp = AutoPcIp.IsChecked == true,
-            DeviceSerial = (DeviceChoice.SelectedValue as string) ?? "",
+            DeviceSerial = ((DeviceChoice.SelectedValue as string)?.StartsWith("wifi:", StringComparison.OrdinalIgnoreCase) == true)
+                ? ""
+                : ((DeviceChoice.SelectedValue as string) ?? ""),
             RtpPort = int.TryParse(RtpPort.Text, out var rtp) ? rtp : settings.RtpPort,
             UsbPort = int.TryParse(UsbPort.Text, out var usb) ? usb : settings.UsbPort,
             ObsPort = int.TryParse(ObsPort.Text, out var obs) ? obs : settings.ObsPort,
@@ -698,13 +949,15 @@ public partial class MainWindow : Window {
         SettingsPanel.IsEnabled = !busy;
         if (BasicStartButton != null) {
             BasicStartButton.Content = running ? L.Get("s_b2e4dba597c4") : L.Get("s_9825166bb975");
-            BasicStartButton.Background = running ? new SolidColorBrush(Color.FromRgb(180, 50, 50)) : new SolidColorBrush(Color.FromRgb(28, 169, 137));
-            BasicStartButton.Foreground = running ? Brushes.White : new SolidColorBrush(Color.FromRgb(4, 28, 22));
+            BasicStartButton.SetResourceReference(Control.BackgroundProperty, running ? "AccentTallyBrush" : "AccentPrimaryBrush");
+            BasicStartButton.Foreground = running ? Brushes.White : (Brush)FindResource("AccentPrimaryTextBrush");
             BasicStartButton.IsEnabled = running || !busy;
         }
         if (BasicTransportChoice != null) BasicTransportChoice.IsEnabled = !busy && !running;
         ModeToggleButton.IsEnabled = !busy;
         PrivacyMuteButton.IsEnabled = !busy;
+        if (QuickSlateButton != null) QuickSlateButton.IsEnabled = !busy;
+        UpdateTallyAndMonitorBorder();
     }
 
     private void ModeToggle_Click(object sender, RoutedEventArgs e) {
@@ -739,13 +992,591 @@ public partial class MainWindow : Window {
             BasicPanel.Visibility = Visibility.Collapsed;
             SettingsPanel.Visibility = Visibility.Visible;
             ModeToggleButton.Content = L.Get("s_f6066218832c");
-            ProPresetBar.Visibility = Visibility.Visible;
+            ProPresetBar.Visibility = settings.MiniControllerMode ? Visibility.Collapsed : Visibility.Visible;
         } else {
             BasicPanel.Visibility = Visibility.Visible;
             SettingsPanel.Visibility = Visibility.Collapsed;
             ModeToggleButton.Content = L.Get("s_f9a245781fea");
             ProPresetBar.Visibility = Visibility.Collapsed;
         }
+    }
+
+    // ==================== 5.0 STUDIO: ТЕМЫ, МИНИ-ПУЛЬТ, LUT, СКОПЫ, FOCUS PULL, ЗВУК И OBS ====================
+
+    private void ThemeToggle_Click(object sender, RoutedEventArgs e) {
+        var next = StudioThemeManager.IsNordic(settings.UiTheme)
+            ? StudioThemeManager.CineRig
+            : StudioThemeManager.NordicAtelier;
+        ApplyStudioTheme(next, persist: true);
+    }
+
+    public void ApplyStudioTheme(string theme, bool persist = true) {
+        settings.UiTheme = StudioThemeManager.Normalize(theme);
+        StudioThemeManager.Apply(settings.UiTheme);
+        UpdateThemeButtonUI();
+        UpdatePrivacyMuteUI(settings.PrivacyMute);
+        UpdateQuickMicButtonUI();
+        UpdateGridUI(gridEnabled);
+        UpdatePeakingUI(focusPeakingEnabled);
+        UpdateZebraUI(zebraEnabled);
+        UpdateFalseColorUI(falseColorEnabled);
+        UpdateAutoFramingUI(AutoFraming.IsChecked == true);
+        UpdateFaceTrackingUI(FaceTracking.IsChecked == true);
+        UpdateFaceOverlayButtonUI();
+        UpdateLockAeAwbUI(LockAeAwb.IsChecked == true);
+        UpdateTallyAndMonitorBorder();
+        Log(StudioThemeManager.IsNordic(settings.UiTheme)
+            ? "Интерфейс · выбран характер «Nordic Atelier» (светлый тактильный прибор)"
+            : "Интерфейс · выбран характер «Cine Rig» (тёмный режиссёрский киномонитор)");
+        if (persist) {
+            QueueSave();
+            ApplyControls();
+        }
+    }
+
+    private void UpdateThemeButtonUI() {
+        if (ThemeToggleButton == null) return;
+        bool nordic = StudioThemeManager.IsNordic(settings?.UiTheme);
+        ThemeToggleButton.Content = nordic ? "☀️ NORDIC ATELIER" : "🌙 CINE RIG";
+    }
+
+    private void MiniMode_Click(object sender, RoutedEventArgs e) {
+        bool nextMini = !settings.MiniControllerMode;
+        settings.MiniControllerMode = nextMini;
+        ApplyMiniControllerLayout(nextMini, resizeWindow: true);
+        QueueSave();
+    }
+
+    public void ApplyMiniControllerLayout(bool mini, bool resizeWindow) {
+        if (LeftPaneColumn == null || CenterGapColumn == null || RightMonitorColumn == null) return;
+        if (mini) {
+            if (resizeWindow && WindowState == WindowState.Normal && Width >= 800 && Height >= 600) {
+                normalWindowWidth = Width;
+                normalWindowHeight = Height;
+                if (double.IsFinite(Left) && double.IsFinite(Top)) {
+                    normalWindowLeft = Left;
+                    normalWindowTop = Top;
+                }
+            }
+            LeftPaneColumn.Width = new GridLength(0);
+            CenterGapColumn.Width = new GridLength(0);
+            RightMonitorColumn.Width = new GridLength(1, GridUnitType.Star);
+            LeftControlBorder.Visibility = Visibility.Collapsed;
+            ProPresetBar.Visibility = Visibility.Collapsed;
+            if (HeaderAuxControlsPanel != null) HeaderAuxControlsPanel.Visibility = Visibility.Collapsed;
+            if (DualCamButton != null) DualCamButton.Visibility = Visibility.Collapsed;
+            if (HeaderConnectionBadge != null) HeaderConnectionBadge.Visibility = Visibility.Collapsed;
+            if (HeaderSubtitleText != null) HeaderSubtitleText.Visibility = Visibility.Collapsed;
+            if (PowerTelemetryCard != null) PowerTelemetryCard.Visibility = Visibility.Collapsed;
+            if (EventLogCard != null) EventLogCard.Visibility = Visibility.Collapsed;
+            if (FooterSecondaryActions != null) FooterSecondaryActions.Visibility = Visibility.Collapsed;
+            if (TechnicalText != null) TechnicalText.Visibility = Visibility.Collapsed;
+            if (DetailText != null) DetailText.Visibility = Visibility.Collapsed;
+            PreviewContainer.MinHeight = 200;
+            Topmost = true;
+            if (MiniModeButton != null) MiniModeButton.Content = "⊞ ПОЛНЫЙ ПУЛЬТ";
+            if (resizeWindow) {
+                if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal;
+                MinWidth = 540;
+                MinHeight = 560;
+                Width = 600;
+                Height = 670;
+            }
+        } else {
+            LeftPaneColumn.Width = new GridLength(1.02, GridUnitType.Star);
+            CenterGapColumn.Width = new GridLength(14);
+            RightMonitorColumn.Width = new GridLength(1.20, GridUnitType.Star);
+            LeftControlBorder.Visibility = Visibility.Visible;
+            if (HeaderAuxControlsPanel != null) HeaderAuxControlsPanel.Visibility = Visibility.Visible;
+            if (DualCamButton != null) DualCamButton.Visibility = Visibility.Visible;
+            if (HeaderConnectionBadge != null) HeaderConnectionBadge.Visibility = Visibility.Visible;
+            if (HeaderSubtitleText != null) HeaderSubtitleText.Visibility = Visibility.Visible;
+            if (PowerTelemetryCard != null) PowerTelemetryCard.Visibility = Visibility.Visible;
+            if (EventLogCard != null) EventLogCard.Visibility = Visibility.Visible;
+            if (FooterSecondaryActions != null) FooterSecondaryActions.Visibility = Visibility.Visible;
+            if (TechnicalText != null) TechnicalText.Visibility = Visibility.Visible;
+            if (DetailText != null) DetailText.Visibility = Visibility.Visible;
+            PreviewContainer.MinHeight = 295;
+            Topmost = false;
+            if (MiniModeButton != null) MiniModeButton.Content = "⧉ МИНИ-ПУЛЬТ";
+            UpdateModeUI();
+            if (resizeWindow) {
+                MinWidth = 980;
+                MinHeight = 680;
+                Width = Math.Max(980, normalWindowWidth);
+                Height = Math.Max(680, normalWindowHeight);
+            }
+        }
+    }
+
+    private void LaunchSecondCamera_Click(object sender, RoutedEventArgs e) {
+        try {
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)) {
+                Log("Мультикам: не удалось определить исполняемый файл приложения.");
+                return;
+            }
+            int nextInstance = Settings.ActiveInstance == 1 ? 2 : Settings.ActiveInstance + 1;
+            if (nextInstance > 8) nextInstance = 2;
+            Process.Start(new ProcessStartInfo(exePath, $"--instance {nextInstance}") {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(exePath)!
+            });
+            Log($"Мультикам · запущено независимое окно Камеры #{nextInstance} (Spout: H3HCam_{nextInstance}, порты +{(nextInstance - 1) * 10})");
+        } catch (Exception ex) {
+            Log("Мультикам: " + ex.Message);
+        }
+    }
+
+    private void LutPresetChoice_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+        if (filling || LutPresetChoice == null) return;
+        if (CustomLutPanel != null) {
+            CustomLutPanel.Visibility = LutPresetChoice.SelectedIndex == 4 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        QueueSave();
+        UpdateLutBadgeUI();
+        ApplyControls();
+    }
+
+    private void BrowseLut_Click(object sender, RoutedEventArgs e) {
+        var dlg = new OpenFileDialog {
+            Title = "Выберите 3D LUT таблицу (.cube)",
+            Filter = "3D LUT файлы (*.cube)|*.cube|Все файлы (*.*)|*.*",
+            CheckFileExists = true
+        };
+        if (dlg.ShowDialog() == true && CustomLutPathBox != null) {
+            CustomLutPathBox.Text = dlg.FileName;
+            if (LutPresetChoice != null) LutPresetChoice.SelectedIndex = 4;
+            Log($"3D LUT · загружена таблица «{Path.GetFileName(dlg.FileName)}»");
+            QueueSave();
+            UpdateLutBadgeUI();
+            ApplyControls();
+        }
+    }
+
+    private void LutStrengthSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) {
+        if (filling || LutStrengthSlider == null) return;
+        if (LutStrengthText != null) LutStrengthText.Text = $"{(int)Math.Round(LutStrengthSlider.Value * 100)}%";
+        QueueSave();
+        UpdateLutBadgeUI();
+    }
+
+    private void UpdateLutBadgeUI() {
+        if (LutBadgeBorder == null || LutBadgeText == null || LutPresetChoice == null) return;
+        int idx = LutPresetChoice.SelectedIndex;
+        double strength = LutStrengthSlider?.Value ?? 0.85;
+        if (idx <= 0 || strength <= 0.01) {
+            LutBadgeBorder.Visibility = Visibility.Collapsed;
+            return;
+        }
+        string label = idx switch {
+            1 => "KODAK 2383",
+            2 => "ARRI WARM",
+            3 => "NORDIC DAY",
+            4 => string.IsNullOrWhiteSpace(CustomLutPathBox?.Text) ? "CUSTOM LUT" : Path.GetFileNameWithoutExtension(CustomLutPathBox.Text).ToUpperInvariant(),
+            _ => "LUT"
+        };
+        if (label.Length > 14) label = label[..14];
+        LutBadgeText.Text = $"LUT · {label} {(int)Math.Round(strength * 100)}%";
+        LutBadgeBorder.Visibility = Visibility.Visible;
+    }
+
+    private void PrivacySlateModeChoice_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+        if (filling || PrivacySlateModeChoice == null) return;
+        if (PrivacySlateImagePanel != null) {
+            PrivacySlateImagePanel.Visibility = PrivacySlateModeChoice.SelectedIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        QueueSave();
+        ApplyControls();
+    }
+
+    private void BrowseSlateImage_Click(object sender, RoutedEventArgs e) {
+        var dlg = new OpenFileDialog {
+            Title = "Выберите изображение для заставки приватности",
+            Filter = L.Get("s_19d41186dedb"),
+            CheckFileExists = true
+        };
+        if (dlg.ShowDialog() == true && PrivacySlateImageBox != null) {
+            PrivacySlateImageBox.Text = dlg.FileName;
+            QueueSave();
+            ApplyControls();
+        }
+    }
+
+    private void FalseColor_Click(object sender, RoutedEventArgs e) {
+        UpdateFalseColorUI(!falseColorEnabled);
+        QueueSave();
+    }
+
+    private void UpdateFalseColorUI(bool enabled) {
+        falseColorEnabled = enabled;
+        if (FalseColorButton == null) return;
+        FalseColorButton.Content = enabled ? "🌈 IRE ON" : "🌈 IRE";
+        StyleOverlayToggleButton(FalseColorButton, enabled);
+    }
+
+    private void ScopeModeChoice_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+        if (filling || ScopeModeChoice == null) return;
+        var mode = ScopeModeChoice.SelectedIndex switch {
+            1 => "waveform",
+            2 => "parade",
+            3 => "histogram",
+            _ => "none"
+        };
+        UpdateScopeVisibilityUI(mode);
+        QueueSave();
+    }
+
+    private void UpdateScopeVisibilityUI(string? mode) {
+        if (ScopeBorder == null || ScopeTitleText == null) return;
+        var m = (mode ?? "none").ToLowerInvariant();
+        if (m == "none") {
+            ScopeBorder.Visibility = Visibility.Collapsed;
+            return;
+        }
+        ScopeTitleText.Text = m switch {
+            "parade" => "RGB PARADE · IRE",
+            "histogram" => "RGB HISTOGRAM",
+            _ => "LUMA WAVEFORM · IRE"
+        };
+        ScopeBorder.Visibility = Visibility.Visible;
+    }
+
+    private void SetFocusA_Click(object sender, RoutedEventArgs e) {
+        float cur = float.TryParse(FocusDistance.Text.Replace(',', '.'), CultureInfo.InvariantCulture, out var fd) ? fd : settings.FocusDistance;
+        settings.FocusSlotA = Math.Clamp(cur, 0.0f, 15.0f);
+        if (SetFocusAButton != null) SetFocusAButton.Content = $"A · {settings.FocusSlotA:0.00}";
+        focusPullNextIsB = true;
+        Log($"Focus Pull · точка A сохранена на дистанции {settings.FocusSlotA:0.00} дптр");
+        QueueSave();
+    }
+
+    private void SetFocusB_Click(object sender, RoutedEventArgs e) {
+        float cur = float.TryParse(FocusDistance.Text.Replace(',', '.'), CultureInfo.InvariantCulture, out var fd) ? fd : settings.FocusDistance;
+        settings.FocusSlotB = Math.Clamp(cur, 0.0f, 15.0f);
+        if (SetFocusBButton != null) SetFocusBButton.Content = $"B · {settings.FocusSlotB:0.00}";
+        focusPullNextIsB = false;
+        Log($"Focus Pull · точка B сохранена на дистанции {settings.FocusSlotB:0.00} дптр");
+        QueueSave();
+    }
+
+    private void FocusPullSpeedChoice_Changed(object sender, SelectionChangedEventArgs e) {
+        if (filling) return;
+        QueueSave();
+    }
+
+    private void RunFocusPull_Click(object sender, RoutedEventArgs e) {
+        float cur = float.TryParse(FocusDistance.Text.Replace(',', '.'), CultureInfo.InvariantCulture, out var fd) ? fd : settings.FocusDistance;
+        float target = focusPullNextIsB ? settings.FocusSlotB : settings.FocusSlotA;
+        if (Math.Abs(cur - target) < 0.02f) {
+            target = focusPullNextIsB ? settings.FocusSlotA : settings.FocusSlotB;
+        } else {
+            focusPullNextIsB = !focusPullNextIsB;
+        }
+        filling = true;
+        try {
+            FocusMode.SelectedIndex = 3; // manual
+        } finally { filling = false; }
+
+        focusPullStartDist = cur;
+        focusPullTargetDist = target;
+        focusPullStartTick = Environment.TickCount64;
+        focusPullTimer.Start();
+        if (RunFocusPullButton != null) {
+            RunFocusPullButton.Content = $"⇄ ФОКУС → {target:0.00}…";
+        }
+    }
+
+    private void StepFocusPullAnimation() {
+        double durationMs = Math.Max(150.0, (Read().FocusPullDurationSec) * 1000.0);
+        double elapsed = Environment.TickCount64 - focusPullStartTick;
+        double t = Math.Clamp(elapsed / durationMs, 0.0, 1.0);
+        // Кинематографическая кривая SmoothStep без рывков на старте и финише
+        double smooth = t * t * (3.0 - 2.0 * t);
+        float nextDist = (float)(focusPullStartDist + (focusPullTargetDist - focusPullStartDist) * smooth);
+
+        filling = true;
+        try {
+            FocusDistance.Text = nextDist.ToString("0.00", CultureInfo.InvariantCulture);
+        } finally { filling = false; }
+
+        settings.Focus = "manual";
+        settings.FocusDistance = nextDist;
+        if (engine?.Running == true) {
+            var live = Read();
+            live.Focus = "manual";
+            live.FocusDistance = nextDist;
+            _ = engine.UpdateControls(live, CancellationToken.None);
+        }
+
+        if (t >= 1.0) {
+            focusPullTimer.Stop();
+            if (RunFocusPullButton != null) {
+                RunFocusPullButton.Content = "⇄ ПЛАВНЫЙ ФОКУС A ↔ B";
+            }
+            QueueSave();
+        }
+    }
+
+    private void RefreshAudioDevices_Click(object sender, RoutedEventArgs e) {
+        RefreshAudioDevicesList(Read().AudioOutputDevice);
+        Log("Аудио · обновлён список выходных аудиоустройств Windows");
+    }
+
+    private void RefreshAudioDevicesList(string? preferredName) {
+        if (AudioDeviceChoice == null) return;
+        var prevFilling = filling;
+        filling = true;
+        try {
+            var devices = PhoneAudioEngine.GetOutputDevices();
+            AudioDeviceChoice.ItemsSource = devices;
+            SelectAudioDeviceInCombo(preferredName);
+        } finally {
+            filling = prevFilling;
+        }
+    }
+
+    private void SelectAudioDeviceInCombo(string? preferredName) {
+        if (AudioDeviceChoice?.ItemsSource is not IReadOnlyList<AudioOutputDeviceInfo> list || list.Count == 0) return;
+        if (string.IsNullOrWhiteSpace(preferredName) || preferredName == "default") {
+            AudioDeviceChoice.SelectedIndex = 0;
+            return;
+        }
+        var match = list.FirstOrDefault(d => d.DeviceId >= 0 && d.Name.Equals(preferredName, StringComparison.OrdinalIgnoreCase))
+                 ?? list.FirstOrDefault(d => d.DeviceId >= 0 && d.Name.Contains(preferredName, StringComparison.OrdinalIgnoreCase))
+                 ?? list[0];
+        AudioDeviceChoice.SelectedItem = match;
+    }
+
+    private void AudioSliders_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) {
+        if (filling) return;
+        UpdateAudioSlidersText();
+        QueueSave();
+    }
+
+    private void UpdateAudioSlidersText() {
+        if (AudioGainText != null && AudioGainSlider != null) {
+            AudioGainText.Text = $"{AudioGainSlider.Value:+0.0;-0.0;0.0} дБ";
+        }
+        if (AudioDelayText != null && AudioDelaySlider != null) {
+            AudioDelayText.Text = $"{(int)Math.Round(AudioDelaySlider.Value)} мс";
+        }
+    }
+
+    private void QuickMicToggle_Click(object sender, RoutedEventArgs e) {
+        if (AudioEnabledCheck == null || AudioMutedCheck == null) return;
+        if (AudioEnabledCheck.IsChecked != true) {
+            AudioEnabledCheck.IsChecked = true;
+            AudioMutedCheck.IsChecked = false;
+            Log("Микрофон смартфона · передача звука включена (48 кГц PCM)");
+        } else {
+            AudioMutedCheck.IsChecked = !(AudioMutedCheck.IsChecked == true);
+            Log(AudioMutedCheck.IsChecked == true ? "Микрофон смартфона · звук приглушён (MUTE)" : "Микрофон смартфона · звук в эфире");
+        }
+        UpdateQuickMicButtonUI();
+        QueueSave();
+        ApplyControls();
+    }
+
+    private void UpdateQuickMicButtonUI() {
+        if (QuickMicMuteButton == null) return;
+        bool enabled = AudioEnabledCheck?.IsChecked == true;
+        bool muted = (AudioMutedCheck?.IsChecked == true) || (settings?.PrivacyMute == true);
+        if (!enabled) {
+            QuickMicMuteButton.Content = "🎙️ MIC OFF";
+            QuickMicMuteButton.SetResourceReference(Control.BackgroundProperty, "ButtonSurfaceBrush");
+            QuickMicMuteButton.SetResourceReference(Control.BorderBrushProperty, "ButtonBorderBrush");
+            QuickMicMuteButton.SetResourceReference(Control.ForegroundProperty, "TextMutedBrush");
+        } else if (muted) {
+            QuickMicMuteButton.Content = "🔇 MIC MUTE";
+            QuickMicMuteButton.SetResourceReference(Control.BackgroundProperty, "AccentTallySoftBgBrush");
+            QuickMicMuteButton.SetResourceReference(Control.BorderBrushProperty, "AccentTallyBrush");
+            QuickMicMuteButton.SetResourceReference(Control.ForegroundProperty, "AccentTallyBrush");
+        } else {
+            QuickMicMuteButton.Content = "🎙️ MIC LIVE";
+            QuickMicMuteButton.SetResourceReference(Control.BackgroundProperty, "AccentLiveSoftBgBrush");
+            QuickMicMuteButton.SetResourceReference(Control.BorderBrushProperty, "AccentLiveBrush");
+            QuickMicMuteButton.SetResourceReference(Control.ForegroundProperty, "AccentLiveBrush");
+        }
+    }
+
+    private void UpdateAudioVuMeterUi() {
+        if (VuMeterTrack == null || VuMeterFill == null || VuDbText == null) return;
+        UpdateQuickMicButtonUI();
+        bool audioEnabled = AudioEnabledCheck?.IsChecked == true;
+        bool muted = (AudioMutedCheck?.IsChecked == true) || (settings?.PrivacyMute == true);
+        if (!audioEnabled) {
+            VuMeterFill.Width = 0;
+            VuDbText.Text = "ВЫКЛ";
+            if (AudioBridgeBadgeText != null) AudioBridgeBadgeText.Text = "ВЫКЛ";
+            return;
+        }
+        if (muted) {
+            VuMeterFill.Width = 0;
+            VuDbText.Text = "MUTE";
+            if (AudioBridgeBadgeText != null) AudioBridgeBadgeText.Text = "MUTE";
+            return;
+        }
+        double peakDb = engine?.Running == true ? engine.Audio.PeakDb : -90.0;
+        double trackW = Math.Max(0, VuMeterTrack.ActualWidth - 2);
+        double norm = Math.Clamp((peakDb + 55.0) / 55.0, 0.0, 1.0);
+        VuMeterFill.Width = trackW * norm;
+        if (peakDb > -3.0) {
+            VuMeterFill.SetResourceReference(Border.BackgroundProperty, "AccentTallyBrush");
+        } else if (peakDb > -12.0) {
+            VuMeterFill.SetResourceReference(Border.BackgroundProperty, "AccentPrimaryBrush");
+        } else {
+            VuMeterFill.SetResourceReference(Border.BackgroundProperty, "AccentLiveBrush");
+        }
+        VuDbText.Text = peakDb <= -80.0 ? "-∞ dB" : $"{peakDb:0.0} dB";
+        if (AudioBridgeBadgeText != null) {
+            AudioBridgeBadgeText.Text = engine?.Running == true && engine.Audio.Active ? "В ЭФИРЕ" : "ОЖИДАНИЕ";
+        }
+    }
+
+    private void ObsWsToggle_Changed(object sender, RoutedEventArgs e) {
+        if (filling || obsClient == null) return;
+        var cur = Read();
+        if (!safeMode) {
+            obsClient.ConfigureAndStart(cur.ObsWsUrl, cur.ObsWsPassword, cur.ObsTargetScene, cur.ObsWsEnabled);
+        }
+        QueueSave();
+    }
+
+    private void ObsWsPasswordBox_PasswordChanged(object sender, RoutedEventArgs e) {
+        if (filling) return;
+        QueueSave();
+    }
+
+    private async void SyncObsAudio_Click(object sender, RoutedEventArgs e) {
+        if (obsClient == null) return;
+        var cur = Read();
+        if (!cur.ObsWsEnabled) {
+            ObsWsEnabledCheck.IsChecked = true;
+            cur = Read();
+            obsClient.ConfigureAndStart(cur.ObsWsUrl, cur.ObsWsPassword, cur.ObsTargetScene, true);
+            await Task.Delay(700);
+        }
+        if (string.IsNullOrWhiteSpace(cur.ObsAudioInputName)) {
+            Log("OBS Lip-Sync · укажите имя аудиовхода в OBS (например: Mic/Aux)");
+            return;
+        }
+        bool ok = await obsClient.SetAudioSyncOffsetAsync(cur.ObsAudioInputName, cur.AudioDelayMs);
+        if (!ok) {
+            Log("OBS Lip-Sync · не удалось отправить команду. Проверьте подключение к OBS WebSocket v5 (Инструменты → Настройки сервера WebSocket).");
+        }
+    }
+
+    private void OnObsStateChanged(ObsLiveState state) {
+        lastObsState = state;
+        if (ObsConnectionStatusText != null) {
+            ObsConnectionStatusText.Text = state.StatusText;
+            ObsConnectionStatusText.SetResourceReference(TextBlock.ForegroundProperty,
+                state.TallyOnAir ? "AccentTallyBrush" : (state.Connected ? "AccentLiveBrush" : "TextMutedBrush"));
+        }
+        UpdateTallyAndMonitorBorder();
+
+        // Эко-пауза OBS: снижаем битрейт телефона вне эфира и мгновенно возвращаем при выходе сцены в Program
+        if (settings.ObsWsEnabled && settings.ObsEcoMode && state.Connected && engine?.Running == true) {
+            if (!state.SceneMatchesCamera && !obsEcoThrottled) {
+                obsEcoThrottled = true;
+                var eco = Read();
+                eco.BitrateMbps = Math.Min(eco.BitrateMbps, 4);
+                _ = engine.UpdateControls(eco, CancellationToken.None);
+                Log($"OBS Эко-пауза · сцена «{state.CurrentScene}» вне камеры → битрейт временно снижен до {eco.BitrateMbps} Мбит/с");
+                UpdateTallyAndMonitorBorder();
+            } else if (state.SceneMatchesCamera && obsEcoThrottled) {
+                obsEcoThrottled = false;
+                var full = Read();
+                _ = engine.UpdateControls(full, CancellationToken.None);
+                Log($"OBS Эко-пауза · сцена камеры в эфире → восстановлен полный битрейт {full.BitrateMbps} Мбит/с");
+                UpdateTallyAndMonitorBorder();
+            }
+        } else if (obsEcoThrottled) {
+            obsEcoThrottled = false;
+        }
+    }
+
+    private void UpdateTallyAndMonitorBorder() {
+        if (TallyBadgeBorder == null || TallyBadgeText == null || PreviewContainer == null) return;
+        bool running = engine?.Running == true;
+        bool recording = engine?.IsRecording == true;
+        bool muted = settings?.PrivacyMute == true;
+        bool obsOnAir = lastObsState.TallyOnAir;
+
+        if (muted) {
+            TallyBadgeText.Text = "🔒 SLATE · MUTE";
+            TallyBadgeBorder.SetResourceReference(Border.BackgroundProperty, "AccentSoftBgBrush");
+            TallyBadgeBorder.SetResourceReference(Border.BorderBrushProperty, "AccentPrimaryBrush");
+            TallyBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "AccentPrimaryBrush");
+            PreviewContainer.SetResourceReference(Border.BorderBrushProperty, "AccentPrimaryBrush");
+        } else if (obsOnAir || recording) {
+            TallyBadgeText.Text = obsOnAir ? "● ON AIR · TALLY" : "● REC · TALLY";
+            TallyBadgeBorder.SetResourceReference(Border.BackgroundProperty, "AccentTallySoftBgBrush");
+            TallyBadgeBorder.SetResourceReference(Border.BorderBrushProperty, "AccentTallyBrush");
+            TallyBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "AccentTallyBrush");
+            PreviewContainer.SetResourceReference(Border.BorderBrushProperty, "AccentTallyBrush");
+        } else if (obsEcoThrottled && running) {
+            TallyBadgeText.Text = "🍃 ECO PAUSE";
+            TallyBadgeBorder.SetResourceReference(Border.BackgroundProperty, "AccentSoftBgBrush");
+            TallyBadgeBorder.SetResourceReference(Border.BorderBrushProperty, "AccentPrimaryBrush");
+            TallyBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "AccentPrimaryBrush");
+            PreviewContainer.SetResourceReference(Border.BorderBrushProperty, "BorderStrongBrush");
+        } else if (running) {
+            TallyBadgeText.Text = "● LIVE FEED";
+            TallyBadgeBorder.SetResourceReference(Border.BackgroundProperty, "AccentLiveSoftBgBrush");
+            TallyBadgeBorder.SetResourceReference(Border.BorderBrushProperty, "AccentLiveBrush");
+            TallyBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "AccentLiveBrush");
+            PreviewContainer.SetResourceReference(Border.BorderBrushProperty, "AccentLiveBrush");
+        } else {
+            TallyBadgeText.Text = "● STANDBY";
+            TallyBadgeBorder.SetResourceReference(Border.BackgroundProperty, "BgCardBrush");
+            TallyBadgeBorder.SetResourceReference(Border.BorderBrushProperty, "BorderSubtleBrush");
+            TallyBadgeText.SetResourceReference(TextBlock.ForegroundProperty, "TextMutedBrush");
+            PreviewContainer.SetResourceReference(Border.BorderBrushProperty, "BorderStrongBrush");
+        }
+    }
+
+    private void StyleOverlayToggleButton(Button? btn, bool active) {
+        if (btn == null) return;
+        if (active) {
+            btn.SetResourceReference(Control.BackgroundProperty, "AccentSoftBgBrush");
+            btn.SetResourceReference(Control.BorderBrushProperty, "AccentPrimaryBrush");
+            btn.SetResourceReference(Control.ForegroundProperty, "AccentPrimaryBrush");
+        } else {
+            btn.SetResourceReference(Control.BackgroundProperty, "ButtonSurfaceBrush");
+            btn.SetResourceReference(Control.BorderBrushProperty, "ButtonBorderBrush");
+            btn.SetResourceReference(Control.ForegroundProperty, "TextSecondaryBrush");
+        }
+    }
+
+    private void UpdatePrivacyMuteUI(bool muted) {
+        if (PrivacyMuteButton != null) {
+            PrivacyMuteButton.Content = muted ? "🔒 MUTED" : "🔒 MUTE";
+            if (muted) {
+                PrivacyMuteButton.SetResourceReference(Control.BackgroundProperty, "AccentTallyBrush");
+                PrivacyMuteButton.SetResourceReference(Control.BorderBrushProperty, "AccentTallyBrush");
+                PrivacyMuteButton.Foreground = Brushes.White;
+            } else {
+                PrivacyMuteButton.SetResourceReference(Control.BackgroundProperty, "ButtonSurfaceBrush");
+                PrivacyMuteButton.SetResourceReference(Control.BorderBrushProperty, "ButtonBorderBrush");
+                PrivacyMuteButton.SetResourceReference(Control.ForegroundProperty, "TextPrimaryBrush");
+            }
+        }
+        if (QuickSlateButton != null) {
+            QuickSlateButton.Content = muted ? "🔓 В ЭФИР" : "🔒 ШТОРКА";
+            if (muted) {
+                QuickSlateButton.SetResourceReference(Control.BackgroundProperty, "AccentTallyBrush");
+                QuickSlateButton.SetResourceReference(Control.BorderBrushProperty, "AccentTallyBrush");
+                QuickSlateButton.Foreground = Brushes.White;
+            } else {
+                QuickSlateButton.SetResourceReference(Control.BackgroundProperty, "ButtonSurfaceBrush");
+                QuickSlateButton.SetResourceReference(Control.BorderBrushProperty, "ButtonBorderBrush");
+                QuickSlateButton.SetResourceReference(Control.ForegroundProperty, "TextPrimaryBrush");
+            }
+        }
+        UpdateQuickMicButtonUI();
+        UpdateTallyAndMonitorBorder();
     }
 
     private void BasicCameraChoice_Changed(object sender, SelectionChangedEventArgs e) {
@@ -817,7 +1648,7 @@ public partial class MainWindow : Window {
 
     private async void BasicStart_Click(object sender, RoutedEventArgs e) {
         if (engine?.Running == true) Stop_Click(this, new RoutedEventArgs());
-        else if (BasicCameraSettings.Visibility != Visibility.Visible || (Transport.SelectedIndex == 1 && settings.WifiPairSession.Length == 0)) QuickConnect_Click(sender, e);
+        else if (BasicCameraSettings.Visibility != Visibility.Visible || (Transport.SelectedIndex == 1 && settings.WifiPairSession.Length == 0 && !lastScanSucceeded)) QuickConnect_Click(sender, e);
         else await Start();
     }
 
@@ -857,10 +1688,63 @@ public partial class MainWindow : Window {
         operation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         try {
             var next = Read();
+            var selectedDevKey = (DeviceChoice.SelectedValue as string) ?? "";
+            if (selectedDevKey.StartsWith("wifi:", StringComparison.OrdinalIgnoreCase)) {
+                next.Transport = "wifi";
+                next.PhoneIp = selectedDevKey[5..].Trim();
+            }
             if (next.Transport == "wifi" && next.WifiPairSession.Length > 0) {
                 DeviceHint.Text = L.Get("setup_wifi_paired");
                 lastScanSucceeded = true;
                 return;
+            }
+            if (next.Transport == "wifi" && wifiDiscovery != null) {
+                wifiDiscovery.Start();
+                StateText.Text = "Поиск смартфонов H3H Cam в Wi-Fi сети…";
+                var discovered = await wifiDiscovery.ProbeLanPhonesAsync(operation.Token);
+                var candidates = new List<(string Ip, int Port)>();
+                if (selectedDevKey.StartsWith("wifi:", StringComparison.OrdinalIgnoreCase)) {
+                    var selIp = selectedDevKey[5..].Trim();
+                    var dp = discovered.FirstOrDefault(x => x.Ip == selIp)?.PhonePort ?? WifiDiscoveryService.DefaultPhoneBeaconPort;
+                    candidates.Add((selIp, dp));
+                }
+                foreach (var p in discovered) {
+                    if (candidates.All(c => c.Ip != p.Ip)) candidates.Add((p.Ip, p.PhonePort));
+                }
+                var typedHost = Settings.EndpointHost(next.PhoneIp);
+                if (!string.IsNullOrWhiteSpace(typedHost) && System.Net.IPAddress.TryParse(typedHost, out _) && candidates.All(c => c.Ip != typedHost)) {
+                    candidates.Add((typedHost, WifiDiscoveryService.DefaultPhoneBeaconPort));
+                }
+
+                foreach (var cand in candidates) {
+                    var wifiCaps = await wifiDiscovery.FetchPhoneCapabilitiesAsync(cand.Ip, cand.Port, operation.Token);
+                    if (wifiCaps != null && wifiCaps.Cameras.Count > 0) {
+                        var adbDevs = new List<AdbDevice>();
+                        try { adbDevs = (await AdbController.ListDevicesAsync(next.AdbPath, operation.Token)).ToList(); } catch { }
+                        var bestPcIp = next.AutoPcIp || string.IsNullOrWhiteSpace(next.PcIp) || next.PcIp == "127.0.0.1"
+                            ? WifiDiscoveryService.ResolveBestLocalIpv4(System.Net.IPAddress.Parse(cand.Ip))
+                            : next.PcIp;
+                        filling = true;
+                        PhoneIp.Text = cand.Ip;
+                        if (next.AutoPcIp) PcIp.Text = bestPcIp;
+                        next.PhoneIp = cand.Ip;
+                        next.PcIp = bestPcIp;
+                        next.DeviceSerial = "";
+                        settings = next;
+                        UpdateDevices(adbDevs, "wifi:" + cand.Ip);
+                        ApplyCapabilities(wifiCaps, settings.CameraKey, settings.Width, settings.Height, settings.Fps);
+                        settings.Save();
+                        BasicDeviceNameText.Text = $"{wifiCaps.Manufacturer} {wifiCaps.Model}".Trim();
+                        BasicCameraSettings.Visibility = Visibility.Visible;
+                        lastScanSucceeded = true;
+                        var displayModel = string.IsNullOrWhiteSpace(wifiCaps.Model) ? cand.Ip : wifiCaps.Model.Replace('_', ' ');
+                        DeviceHint.Text = $"{displayModel} · Wi-Fi ({cand.Ip}) → ПК {bestPcIp}";
+                        ConnectionLabel.Text = $"●  {displayModel} · Wi-Fi";
+                        StateText.Text = L.Format("s_501a0c9993b4", wifiCaps.Cameras.Count);
+                        Log($"Wi-Fi Discovery · найден смартфон {displayModel} ({cand.Ip}), камер: {wifiCaps.Cameras.Count}, сетевой интерфейс ПК: {bestPcIp}");
+                        return;
+                    }
+                }
             }
             if (next.Transport == "auto") {
                 // Read-only AOA probe first; never switch a phone away from a working ADB driver.
@@ -893,8 +1777,17 @@ public partial class MainWindow : Window {
                 StateText.Text = L.Format("s_ecfb2b6a1513", directPhone.Cameras.Count);
                 return;
             }
+            if (next.Transport == "auto" && wifiDiscovery != null) {
+                _ = wifiDiscovery.ProbeLanPhonesAsync(operation.Token);
+            }
             var controller = new AdbController(next, Log);
-            await controller.Connect(operation.Token);
+            try {
+                await controller.Connect(operation.Token);
+            } catch (Exception) when (next.Transport == "wifi") {
+                var lanAdapters = WifiDiscoveryService.GetAllLocalLanIpv4();
+                var lanHint = lanAdapters.Count > 0 ? string.Join(", ", lanAdapters) : "LAN";
+                throw new IOException($"Смартфон по Wi-Fi не найден. Откройте обновлённый H3H Cam 5.0 на телефоне в одной Wi-Fi сети с ПК ({lanHint}), затем нажмите «НАЙТИ» или «QR Wi-Fi».");
+            }
             var phone = await controller.GetCapabilities(operation.Token);
             filling = true;
             settings = next;
@@ -945,6 +1838,31 @@ public partial class MainWindow : Window {
         operation = new();
         try {
             var next = Read();
+            var selectedDevKey = (DeviceChoice.SelectedValue as string) ?? "";
+            if (selectedDevKey.StartsWith("wifi:", StringComparison.OrdinalIgnoreCase)) {
+                next.Transport = "wifi";
+                next.PhoneIp = selectedDevKey[5..].Trim();
+            }
+            if (next.Transport == "wifi") {
+                var cleanPhoneHost = Settings.EndpointHost(next.PhoneIp);
+                if (System.Net.IPAddress.TryParse(cleanPhoneHost, out var parsedPhoneIp)) {
+                    if (next.AutoPcIp || string.IsNullOrWhiteSpace(next.PcIp) || next.PcIp == "127.0.0.1") {
+                        var resolvedPc = WifiDiscoveryService.ResolveBestLocalIpv4(parsedPhoneIp);
+                        next.PcIp = resolvedPc;
+                        filling = true;
+                        try { PcIp.Text = resolvedPc; } finally { filling = false; }
+                    }
+                    if (next.WifiPairSession.Length == 0 && wifiDiscovery != null) {
+                        var directPort = wifiDiscovery.GetDiscoveredPhones().FirstOrDefault(p => p.Ip == cleanPhoneHost)?.PhonePort
+                            ?? WifiDiscoveryService.DefaultPhoneBeaconPort;
+                        var directToken = await wifiDiscovery.StartPhoneWifiStreamAsync(cleanPhoneHost, next, directPort, operation.Token);
+                        if (!string.IsNullOrEmpty(directToken)) {
+                            next.WifiPairSession = directToken;
+                            Log($"Wi-Fi Direct · поток запущен на смартфоне {cleanPhoneHost} → ПК {next.PcIp}:{next.RtpPort}");
+                        }
+                    }
+                }
+            }
             if (restart && engine != null && next.WifiPairSession.Length > 0) engine.KeepPairedPhoneForRestart = true;
             if (engine != null) {
                 await engine.DisposeAsync();
@@ -988,26 +1906,50 @@ public partial class MainWindow : Window {
                             }
 
                             lock (previewProcessLock) {
-                                bool hasColor = StudioEffectsProcessor.HasColorAdjustment(s.ColorProfile, s.Brightness, s.Contrast, s.Saturation, s.WbRedGain, s.WbGreenGain, s.WbBlueGain);
-                                if (s.BackgroundEffect != "none" || s.SkinSmoothing || hasColor) {
-                                    if (processedPreviewBuffer == null || processedPreviewBuffer.Length != needed) {
-                                        processedPreviewBuffer = new byte[needed];
+                                bool refreshScopeNow = false;
+                                if (s.PrivacyMute) {
+                                    SmartPrivacySlate.RenderBgra(toDraw, w, h, s, lastUnmutedPreviewFrame);
+                                } else {
+                                    if (lastUnmutedPreviewFrame == null || lastUnmutedPreviewFrame.Length != needed) {
+                                        lastUnmutedPreviewFrame = new byte[needed];
                                     }
-                                    StudioEffectsProcessor.ApplyEffects(toDraw, processedPreviewBuffer, w, h,
-                                        s.BackgroundEffect, s.BackgroundBlurStrength, s.SkinSmoothing,
-                                        focusNormX: 0.5f, focusNormY: 0.45f,
-                                        s.ColorProfile, s.Brightness, s.Contrast, s.Saturation,
-                                        s.CustomBackgroundImage, s.AiSegmentation, s.AiEdgeFeather,
-                                        s.WbRedGain, s.WbGreenGain, s.WbBlueGain);
-                                    toDraw = processedPreviewBuffer;
-                                }
+                                    Buffer.BlockCopy(toDraw, 0, lastUnmutedPreviewFrame, 0, needed);
 
-                                if (focusPeakingEnabled || zebraEnabled) {
-                                    if (overlayBuffer == null || overlayBuffer.Length != needed) {
-                                        overlayBuffer = new byte[needed];
+                                    bool hasColor = StudioEffectsProcessor.HasColorAdjustment(
+                                        s.ColorProfile, s.Brightness, s.Contrast, s.Saturation,
+                                        s.WbRedGain, s.WbGreenGain, s.WbBlueGain, s.LutPath, s.LutStrength);
+                                    if (s.BackgroundEffect != "none" || s.SkinSmoothing || hasColor) {
+                                        if (processedPreviewBuffer == null || processedPreviewBuffer.Length != needed) {
+                                            processedPreviewBuffer = new byte[needed];
+                                        }
+                                        StudioEffectsProcessor.ApplyEffects(toDraw, processedPreviewBuffer, w, h,
+                                            s.BackgroundEffect, s.BackgroundBlurStrength, s.SkinSmoothing,
+                                            focusNormX: 0.5f, focusNormY: 0.45f,
+                                            s.ColorProfile, s.Brightness, s.Contrast, s.Saturation,
+                                            s.CustomBackgroundImage, s.AiSegmentation, s.AiEdgeFeather,
+                                            s.WbRedGain, s.WbGreenGain, s.WbBlueGain,
+                                            s.LutPath, s.LutStrength);
+                                        toDraw = processedPreviewBuffer;
                                     }
-                                    VideoOverlayProcessor.ProcessFrame(toDraw, overlayBuffer, w, h, focusPeakingEnabled, zebraEnabled);
-                                    toDraw = overlayBuffer;
+
+                                    var scopeMode = s.VideoScopeMode;
+                                    if (!string.IsNullOrWhiteSpace(scopeMode) && scopeMode != "none") {
+                                        long nowMs = Environment.TickCount64;
+                                        if (nowMs - lastScopeTickMs >= 65) {
+                                            lastScopeTickMs = nowMs;
+                                            VideoScopesRenderer.RenderScope(toDraw, w, h, scopeMode, scopeRenderBuffer);
+                                            refreshScopeNow = true;
+                                        }
+                                    }
+
+                                    if (focusPeakingEnabled || zebraEnabled || falseColorEnabled) {
+                                        if (overlayBuffer == null || overlayBuffer.Length != needed) {
+                                            overlayBuffer = new byte[needed];
+                                        }
+                                        VideoOverlayProcessor.ProcessFrame(toDraw, overlayBuffer, w, h,
+                                            focusPeakingEnabled, zebraEnabled, enableFalseColor: falseColorEnabled);
+                                        toDraw = overlayBuffer;
+                                    }
                                 }
 
                                 if (previewUiBuffers[0] == null || previewUiBuffers[0].Length != needed) {
@@ -1018,26 +1960,37 @@ public partial class MainWindow : Window {
                                 previewUiBufIndex = 1 - previewUiBufIndex;
                                 Buffer.BlockCopy(toDraw, 0, targetBuf, 0, needed);
                                 toDraw = targetBuf;
-                            }
 
-                            Dispatcher.BeginInvoke(DispatcherPriority.Render, () => {
-                                try {
-                                    if (closing || closed) return;
-                                    if (previewBitmap == null || previewBitmap.PixelWidth != w || previewBitmap.PixelHeight != h) {
-                                        previewBitmap = new System.Windows.Media.Imaging.WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
-                                        LivePreviewImage.Source = previewBitmap;
-                                        PreviewPlaceholder.Visibility = Visibility.Collapsed;
-                                        ResolutionBadgeBorder.Visibility = Visibility.Visible;
-                                        UpdatePreviewResolutionBadge();
-                                        if (gridEnabled) RedrawGrid();
+                                Dispatcher.BeginInvoke(DispatcherPriority.Render, () => {
+                                    try {
+                                        if (closing || closed) return;
+                                        if (previewBitmap == null || previewBitmap.PixelWidth != w || previewBitmap.PixelHeight != h) {
+                                            previewBitmap = new System.Windows.Media.Imaging.WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
+                                            LivePreviewImage.Source = previewBitmap;
+                                            PreviewPlaceholder.Visibility = Visibility.Collapsed;
+                                            ResolutionBadgeBorder.Visibility = Visibility.Visible;
+                                            UpdatePreviewResolutionBadge();
+                                            if (gridEnabled) RedrawGrid();
+                                        }
+                                        previewBitmap.WritePixels(new Int32Rect(0, 0, w, h), toDraw, w * 4, 0);
+                                        if (refreshScopeNow && ScopeImage != null) {
+                                            if (scopeBitmap == null) {
+                                                scopeBitmap = new System.Windows.Media.Imaging.WriteableBitmap(
+                                                    VideoScopesRenderer.ScopeWidth, VideoScopesRenderer.ScopeHeight,
+                                                    96, 96, PixelFormats.Bgra32, null);
+                                                ScopeImage.Source = scopeBitmap;
+                                            }
+                                            scopeBitmap.WritePixels(
+                                                new Int32Rect(0, 0, VideoScopesRenderer.ScopeWidth, VideoScopesRenderer.ScopeHeight),
+                                                scopeRenderBuffer, VideoScopesRenderer.ScopeWidth * 4, 0);
+                                        }
+                                        previewWindow?.RenderFrame(toDraw, w, h);
+                                    } catch { }
+                                    finally {
+                                        Interlocked.Exchange(ref renderingFrame, 0);
                                     }
-                                    previewBitmap.WritePixels(new Int32Rect(0, 0, w, h), toDraw, w * 4, 0);
-                                    previewWindow?.RenderFrame(toDraw, w, h);
-                                } catch { }
-                                finally {
-                                    Interlocked.Exchange(ref renderingFrame, 0);
-                                }
-                            });
+                                });
+                            }
                         } catch {
                             Interlocked.Exchange(ref renderingFrame, 0);
                         }
@@ -1052,7 +2005,10 @@ public partial class MainWindow : Window {
             await engine.Start(operation.Token);
             UpdateVirtualCamStatus();
             filling = true;
-            UpdateDevices([], settings.DeviceSerial);
+            var activeDevKey = (settings.Transport == "wifi" && settings.WifiPairSession.Length > 0 && !string.IsNullOrWhiteSpace(settings.PhoneIp))
+                ? "wifi:" + Settings.EndpointHost(settings.PhoneIp)
+                : settings.DeviceSerial;
+            UpdateDevices(lastAdbDevices, activeDevKey);
             filling = false;
             ConnectionLabel.Text = "●  Android connected";
         } catch (OperationCanceledException) {
@@ -1649,52 +2605,140 @@ public partial class MainWindow : Window {
     }
 
     private async void QuickConnect_Click(object sender, RoutedEventArgs e) {
-        if (Transport.SelectedIndex == 1 && settings.WifiPairSession.Length == 0) ShowQr_Click(sender, e);
-        else { await Scan(); if (lastScanSucceeded) await Start(); }
+        if (Transport.SelectedIndex == 1 && settings.WifiPairSession.Length == 0) {
+            await Scan(showErrors: false);
+            if (lastScanSucceeded) await Start();
+            else ShowQr_Click(sender, e);
+        } else {
+            await Scan();
+            if (lastScanSucceeded) await Start();
+        }
     }
 
     private void ShowQr_Click(object sender, RoutedEventArgs e) {
+        System.Net.Sockets.TcpListener? apkServer = null;
+        CancellationTokenSource? apkCts = null;
         try {
             var current = Read();
             if (busy || engine?.Running == true) { StateText.Text = L.Get("setup_pc_busy"); return; }
             wifiDiscovery?.Start();
             var ticket = wifiDiscovery?.OpenPairing() ?? throw new IOException(L.Get("setup_wifi_unavailable"));
+            var adapters = WifiDiscoveryService.GetAllLocalLanAdapters();
             var pcIp = current.PcIp;
             if (current.AutoPcIp || string.IsNullOrWhiteSpace(pcIp) || pcIp == "127.0.0.1") {
                 pcIp = WifiDiscoveryService.ResolveBestLocalIpv4();
             }
-            var connectUri = $"h3hcam://wifi?pc={pcIp}&token={ticket.Token}";
-            var qrBmp = QrCodeGenerator.GenerateBitmap(connectUri, scale: 9, border: 4);
+            if (adapters.Count == 0 && !string.IsNullOrWhiteSpace(pcIp)) {
+                adapters.Add(new LocalLanAdapter(pcIp, "255.255.255.255", pcIp, false));
+            }
+
+            var apkPath = Path.Combine(AppContext.BaseDirectory, "H3H-Cam-5.0.0.apk");
+            if (!File.Exists(apkPath)) apkPath = Path.Combine(AppContext.BaseDirectory, "H3H-Cam-5.0.apk");
+            var apkFileName = Path.GetFileName(apkPath);
+            int apkPort = 0;
+            if (File.Exists(apkPath)) {
+                try {
+                    apkCts = new CancellationTokenSource();
+                    apkServer = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, 0);
+                    apkServer.Start();
+                    apkPort = ((System.Net.IPEndPoint)apkServer.LocalEndpoint).Port;
+                    var serverRef = apkServer;
+                    var tokenRef = apkCts.Token;
+                    _ = Task.Run(async () => {
+                        while (!tokenRef.IsCancellationRequested) {
+                            System.Net.Sockets.TcpClient client;
+                            try { client = await serverRef.AcceptTcpClientAsync(tokenRef); }
+                            catch { break; }
+                            _ = Task.Run(async () => {
+                                using (client) {
+                                    try {
+                                        using var stream = client.GetStream();
+                                        using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, leaveOpen: true);
+                                        var reqLine = await reader.ReadLineAsync(tokenRef);
+                                        while (!string.IsNullOrEmpty(await reader.ReadLineAsync(tokenRef))) { }
+                                        if (reqLine != null && (reqLine.StartsWith("GET ", StringComparison.OrdinalIgnoreCase) || reqLine.StartsWith("HEAD ", StringComparison.OrdinalIgnoreCase))) {
+                                            var apkBytes = await File.ReadAllBytesAsync(apkPath, tokenRef);
+                                            var header = $"HTTP/1.1 200 OK\r\nContent-Type: application/vnd.android.package-archive\r\nContent-Disposition: attachment; filename=\"{apkFileName}\"\r\nContent-Length: {apkBytes.Length}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+                                            var headerBytes = Encoding.ASCII.GetBytes(header);
+                                            await stream.WriteAsync(headerBytes, tokenRef);
+                                            if (reqLine.StartsWith("GET ", StringComparison.OrdinalIgnoreCase)) {
+                                                await stream.WriteAsync(apkBytes, tokenRef);
+                                            }
+                                            await stream.FlushAsync(tokenRef);
+                                        }
+                                    } catch { }
+                                }
+                            }, tokenRef);
+                        }
+                    }, tokenRef);
+                } catch { apkPort = 0; }
+            }
+
+            bool showingApkQr = false;
+            var discPort = wifiDiscovery.Port;
+
+            string BuildPairUri(string selectedIp) {
+                if (discPort != WifiDiscoveryService.DiscoveryPort) {
+                    var alts = string.Join(",", adapters.Select(a => a.Ip).Where(x => x != selectedIp).Take(2));
+                    var altPart = alts.Length > 0 ? $"&alt={alts}" : "";
+                    return $"h3hcam://wifi?pc={selectedIp}{altPart}&dp={discPort}&token={ticket.Token}";
+                }
+                return $"h3hcam://wifi?pc={selectedIp}&token={ticket.Token}";
+            }
 
             var qrWin = new Window {
                 Title = L.Get("s_b4ae5af1d571"),
-                Width = 420,
-                Height = 600,
+                Width = 450,
+                Height = adapters.Count > 1 ? 680 : 635,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
                 Background = new SolidColorBrush(Color.FromRgb(12, 20, 33)),
                 ResizeMode = ResizeMode.NoResize
             };
-            var root = new StackPanel { Margin = new Thickness(24) };
-            root.Children.Add(new TextBlock {
+            var root = new StackPanel { Margin = new Thickness(22, 18, 22, 18) };
+            var titleBlock = new TextBlock {
                 Text = L.Get("s_4c14642081ee"),
-                FontSize = 18,
+                FontSize = 17.5,
                 FontWeight = FontWeights.Bold,
                 Foreground = Brushes.White,
-                Margin = new Thickness(0, 0, 0, 8)
-            });
-            root.Children.Add(new TextBlock {
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+            root.Children.Add(titleBlock);
+
+            var subtitleBlock = new TextBlock {
                 Text = L.Format("s_4113ce7323a2", pcIp, current.RtpPort),
-                Foreground = new SolidColorBrush(Color.FromRgb(132, 152, 180)),
+                Foreground = new SolidColorBrush(Color.FromRgb(148, 168, 196)),
+                FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 16)
-            });
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            root.Children.Add(subtitleBlock);
+
+            ComboBox? ipCombo = null;
+            if (adapters.Count > 1) {
+                root.Children.Add(new TextBlock {
+                    Text = "Сетевой адаптер ПК (выберите сеть вашего Wi-Fi роутера):",
+                    Foreground = new SolidColorBrush(Color.FromRgb(212, 162, 89)),
+                    FontSize = 11.5,
+                    FontWeight = FontWeights.SemiBold,
+                    Margin = new Thickness(0, 0, 0, 4)
+                });
+                ipCombo = new ComboBox {
+                    ItemsSource = adapters,
+                    DisplayMemberPath = nameof(LocalLanAdapter.Label),
+                    SelectedValuePath = nameof(LocalLanAdapter.Ip),
+                    SelectedValue = pcIp,
+                    Margin = new Thickness(0, 0, 0, 10)
+                };
+                if (ipCombo.SelectedIndex < 0) ipCombo.SelectedIndex = 0;
+                root.Children.Add(ipCombo);
+            }
+
             var img = new Image {
-                Source = qrBmp,
-                Width = 260,
-                Height = 260,
+                Width = 252,
+                Height = 252,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 16)
+                Margin = new Thickness(0, 4, 0, 12)
             };
             RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.NearestNeighbor);
             root.Children.Add(img);
@@ -1703,18 +2747,74 @@ public partial class MainWindow : Window {
                 Text = L.Get("setup_qr_hint"),
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(Color.FromRgb(112, 229, 195)),
-                FontSize = 12,
-                HorizontalAlignment = HorizontalAlignment.Center
+                FontSize = 11.5,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 10)
             };
             root.Children.Add(statusBlock);
+
+            Button? modeSwitchBtn = null;
+            void RefreshQrVisual() {
+                var selIp = (ipCombo?.SelectedValue as string) ?? pcIp;
+                if (showingApkQr && apkPort > 0) {
+                    var apkUrl = $"http://{selIp}:{apkPort}/{apkFileName}";
+                    img.Source = QrCodeGenerator.GenerateBitmap(apkUrl, scale: 8, border: 4);
+                    titleBlock.Text = "📲 Установка H3H Cam 5.0 по Wi-Fi";
+                    subtitleBlock.Text = $"Отсканируйте камерой телефона или откройте в браузере:\n{apkUrl}";
+                    statusBlock.Text = "После установки H3H Cam 5.0 откройте приложение на смартфоне и вернитесь к QR сопряжения (или нажмите «НАЙТИ» на ПК).";
+                    if (modeSwitchBtn != null) modeSwitchBtn.Content = "← Вернуться к QR подключения камеры";
+                } else {
+                    var uri = BuildPairUri(selIp);
+                    img.Source = QrCodeGenerator.GenerateBitmap(uri, scale: 8, border: 4);
+                    titleBlock.Text = L.Get("s_4c14642081ee");
+                    subtitleBlock.Text = L.Format("s_4113ce7323a2", selIp, current.RtpPort);
+                    statusBlock.Text = L.Get("setup_qr_hint") + "\nНа смартфонах Vivo / Xiaomi при ошибке EPERM разрешите приложению H3H Cam доступ к Wi-Fi (iМенеджер → Контроль сети).";
+                    if (modeSwitchBtn != null) modeSwitchBtn.Content = "📲 Скачать новый APK 5.0 на второй телефон по Wi-Fi";
+                }
+            }
+
+            if (apkPort > 0) {
+                modeSwitchBtn = new Button {
+                    Padding = new Thickness(12, 7, 12, 7),
+                    FontSize = 11.5,
+                    HorizontalAlignment = HorizontalAlignment.Stretch
+                };
+                modeSwitchBtn.Click += (_, _) => {
+                    showingApkQr = !showingApkQr;
+                    RefreshQrVisual();
+                };
+                root.Children.Add(modeSwitchBtn);
+            }
+
+            if (ipCombo != null) {
+                ipCombo.SelectionChanged += (_, _) => {
+                    if (ipCombo.SelectedValue is string chosenIp && !string.IsNullOrWhiteSpace(chosenIp)) {
+                        pcIp = chosenIp;
+                        RefreshQrVisual();
+                    }
+                };
+            }
+
+            RefreshQrVisual();
             qrWin.Content = root;
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             timer.Tick += (_, _) => { if (engine?.Running == true && settings.WifiPairSession == ticket.Token) qrWin.Close(); };
-            qrWin.Closed += (_, _) => timer.Stop();
+            qrWin.Closed += (_, _) => {
+                timer.Stop();
+                try { apkCts?.Cancel(); } catch { }
+                try { apkServer?.Stop(); } catch { }
+                apkCts?.Dispose();
+            };
             timer.Start();
             // Keep the invitation briefly after close so an in-flight phone request can finish.
             qrWin.ShowDialog();
-        } catch (Exception ex) { Log("QR Wi-Fi: " + ex.Message); }
+        } catch (Exception ex) {
+            try { apkCts?.Cancel(); } catch { }
+            try { apkServer?.Stop(); } catch { }
+            apkCts?.Dispose();
+            Log("QR Wi-Fi: " + ex.Message);
+        }
     }
 
     private void ClearLog_Click(object sender, RoutedEventArgs e) => LogBox.Clear();
@@ -1848,8 +2948,7 @@ public partial class MainWindow : Window {
 
     private void PrivacyMute_Click(object sender, RoutedEventArgs e) {
         settings.PrivacyMute = !settings.PrivacyMute;
-        PrivacyMuteButton.Background = settings.PrivacyMute ? new SolidColorBrush(Color.FromRgb(220, 60, 60)) : null;
-        PrivacyMuteButton.Content = settings.PrivacyMute ? "🔒 MUTED" : "🔒 MUTE";
+        UpdatePrivacyMuteUI(settings.PrivacyMute);
         Log(settings.PrivacyMute ? L.Get("s_d9d09ce574c9") : L.Get("s_ba688cee6c83"));
         QueueSave();
         ApplyControls();
@@ -1898,9 +2997,8 @@ public partial class MainWindow : Window {
     private void AutoFraming_Click(object sender, RoutedEventArgs e) => ToggleAutoFraming();
 
     private void UpdateAutoFramingUI(bool enabled) {
-        AutoFramingButton.Content = enabled ? "🤖 CENTER ON" : "🤖 CENTER OFF";
-        AutoFramingButton.Background = enabled ? new SolidColorBrush(Color.FromRgb(30, 65, 80)) : new SolidColorBrush(Color.FromRgb(21, 36, 53));
-        AutoFramingButton.Foreground = enabled ? new SolidColorBrush(Color.FromRgb(112, 229, 195)) : new SolidColorBrush(Color.FromRgb(132, 152, 180));
+        AutoFramingButton.Content = enabled ? "🤖 CENTER ON" : "🤖 CENTER";
+        StyleOverlayToggleButton(AutoFramingButton, enabled);
     }
 
     private void AutoFramingSliders_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) {
@@ -2054,9 +3152,8 @@ public partial class MainWindow : Window {
     private void FaceTracking_Click(object sender, RoutedEventArgs e) => ToggleFaceTracking();
 
     private void UpdateFaceTrackingUI(bool enabled) {
-        FaceTrackingButton.Content = enabled ? "👤 FACE ON" : "👤 FACE OFF";
-        FaceTrackingButton.Background = enabled ? new SolidColorBrush(Color.FromRgb(28, 60, 50)) : new SolidColorBrush(Color.FromRgb(21, 36, 53));
-        FaceTrackingButton.Foreground = enabled ? new SolidColorBrush(Color.FromRgb(112, 229, 195)) : new SolidColorBrush(Color.FromRgb(132, 152, 180));
+        FaceTrackingButton.Content = enabled ? "👤 FACE ON" : "👤 FACE";
+        StyleOverlayToggleButton(FaceTrackingButton, enabled);
     }
 
     private void FaceOverlay_Click(object sender, RoutedEventArgs e) {
@@ -2070,8 +3167,7 @@ public partial class MainWindow : Window {
     }
 
     private void UpdateFaceOverlayButtonUI() {
-        FaceOverlayButton.Background = faceOverlayEnabled ? new SolidColorBrush(Color.FromRgb(21, 58, 69)) : new SolidColorBrush(Color.FromRgb(21, 36, 53));
-        FaceOverlayButton.Foreground = faceOverlayEnabled ? new SolidColorBrush(Color.FromRgb(0, 229, 255)) : new SolidColorBrush(Color.FromRgb(132, 152, 180));
+        StyleOverlayToggleButton(FaceOverlayButton, faceOverlayEnabled);
     }
 
     private void UpdateFaceOverlay(FaceTrackingInfo? face) {
@@ -2457,8 +3553,7 @@ public partial class MainWindow : Window {
 
     private void UpdateLockAeAwbUI(bool locked) {
         LockAeAwbButton.Content = locked ? "🔒 AE/AWB LOCKED" : "🔓 AE/AWB";
-        LockAeAwbButton.Background = locked ? new SolidColorBrush(Color.FromRgb(40, 75, 110)) : new SolidColorBrush(Color.FromRgb(21, 36, 53));
-        LockAeAwbButton.Foreground = locked ? new SolidColorBrush(Color.FromRgb(112, 229, 195)) : new SolidColorBrush(Color.FromRgb(132, 152, 180));
+        StyleOverlayToggleButton(LockAeAwbButton, locked);
         previewWindow?.UpdateLockState(locked);
     }
 
@@ -2585,8 +3680,7 @@ public partial class MainWindow : Window {
     private void UpdateGridUI(bool enabled) {
         gridEnabled = enabled;
         GridButton.Content = enabled ? "📐 GRID ON" : "📐 GRID";
-        GridButton.Background = enabled ? new SolidColorBrush(Color.FromRgb(28, 58, 50)) : new SolidColorBrush(Color.FromRgb(21, 36, 53));
-        GridButton.Foreground = enabled ? new SolidColorBrush(Color.FromRgb(112, 229, 195)) : new SolidColorBrush(Color.FromRgb(132, 152, 180));
+        StyleOverlayToggleButton(GridButton, enabled);
         GridCanvas.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         if (enabled) RedrawGrid();
         else GridCanvas.Children.Clear();
@@ -2603,8 +3697,7 @@ public partial class MainWindow : Window {
     private void UpdatePeakingUI(bool enabled) {
         focusPeakingEnabled = enabled;
         PeakButton.Content = enabled ? "🔍 PEAK ON" : "🔍 PEAK";
-        PeakButton.Background = enabled ? new SolidColorBrush(Color.FromRgb(28, 58, 50)) : new SolidColorBrush(Color.FromRgb(21, 36, 53));
-        PeakButton.Foreground = enabled ? new SolidColorBrush(Color.FromRgb(112, 229, 195)) : new SolidColorBrush(Color.FromRgb(132, 152, 180));
+        StyleOverlayToggleButton(PeakButton, enabled);
         previewWindow?.UpdatePeakingState(enabled);
     }
 
@@ -2618,8 +3711,7 @@ public partial class MainWindow : Window {
     private void UpdateZebraUI(bool enabled) {
         zebraEnabled = enabled;
         ZebraButton.Content = enabled ? "🦓 ZEBRA ON" : "🦓 ZEBRA";
-        ZebraButton.Background = enabled ? new SolidColorBrush(Color.FromRgb(58, 48, 28)) : new SolidColorBrush(Color.FromRgb(21, 36, 53));
-        ZebraButton.Foreground = enabled ? new SolidColorBrush(Color.FromRgb(255, 204, 102)) : new SolidColorBrush(Color.FromRgb(132, 152, 180));
+        StyleOverlayToggleButton(ZebraButton, enabled);
         previewWindow?.UpdateZebraState(enabled);
     }
 
@@ -2807,6 +3899,8 @@ public partial class MainWindow : Window {
         closing = true;
         trayIcon?.Dispose();
         trayIcon = null;
+        vuMeterTimer.Stop();
+        focusPullTimer.Stop();
         controlsDebounceTimer.Stop();
         try { previewWindow?.Close(); } catch { }
         previewWindow = null;
@@ -2820,12 +3914,23 @@ public partial class MainWindow : Window {
             if (!busy) {
                 var s = Read();
                 if (WindowState == WindowState.Normal) {
-                    s.WindowLeft = Left;
-                    s.WindowTop = Top;
-                    s.WindowWidth = Width;
-                    s.WindowHeight = Height;
+                    if (!s.MiniControllerMode && Width >= 800 && Height >= 600) {
+                        s.WindowWidth = Width;
+                        s.WindowHeight = Height;
+                        if (double.IsFinite(Left) && double.IsFinite(Top)) {
+                            s.WindowLeft = Left;
+                            s.WindowTop = Top;
+                        }
+                    } else {
+                        s.WindowWidth = Math.Max(980, normalWindowWidth);
+                        s.WindowHeight = Math.Max(680, normalWindowHeight);
+                    }
                 }
                 s.Save();
+            }
+            if (obsClient != null) {
+                await obsClient.DisposeAsync();
+                obsClient = null;
             }
             if (engine != null) await engine.DisposeAsync();
         } catch (Exception ex) { Log(L.Get("s_eafe0608cdef") + ex.Message); }

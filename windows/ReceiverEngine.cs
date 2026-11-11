@@ -14,18 +14,20 @@ public sealed record FaceTrackingInfo(float X, float Y, float Width, float Heigh
 public sealed record LiveStatus(string State, string Serial, string Transport, string Resolution, int RequestedFps,
     double DetectedFps, double ReceivedMbps, double EncodedMbps, long Packets, TimeSpan Elapsed, string Ffmpeg, string Thermal, string Details, PowerTelemetry Power,
     long LostPackets = 0, long RecoveredPackets = 0, long DroppedFrames = 0, double LatencyMs = 0, FaceTrackingInfo? Face = null,
-    TransportState TransportState = TransportState.Connected);
+    TransportState TransportState = TransportState.Connected, bool AudioActive = false, double AudioPeakDb = -90.0, double AudioRmsDb = -90.0);
 
 public sealed class ReceiverEngine(Settings initialSettings, Action<string> log) : IAsyncDisposable {
     private Settings settings = initialSettings.Clone();
     private Settings requestedSettings = initialSettings.Clone();
     private readonly ConnectionManager connectionManager = new(log);
     private readonly StreamRecorder recorder = new(log);
+    private readonly PhoneAudioEngine audioEngine = new(log);
     private string recordingSdpPath = "";
     private IPEndPoint? recordingEndpoint;
     private bool recordingBootstrapped;
     private int recordingGeneration;
     public ConnectionManager ConnectionManager => connectionManager;
+    public PhoneAudioEngine Audio => audioEngine;
     public bool IsRecording => recorder.IsRecording;
     public TimeSpan RecordElapsed => recorder.Elapsed;
     public string? RecordFilePath => recorder.CurrentFilePath;
@@ -42,7 +44,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         File.WriteAllText(recordingSdpPath, File.ReadAllText(sdpPath).Replace($"m=video {ingestPort} ", $"m=video {port} "));
         recordingBootstrapped = false;
         recordingGeneration = Volatile.Read(ref sourceGeneration);
-        var path = recorder.Start(settings, recordingSdpPath, customDir);
+        var path = recorder.Start(settings, recordingSdpPath, customDir, audioEngine);
         recordingEndpoint = new IPEndPoint(IPAddress.Loopback, port);
         RequestIdr();
         return path;
@@ -176,13 +178,14 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         var oldSettings = settings;
         requestedSettings = nextSettings.Clone();
         var outputRoutingChanged = oldSettings.VirtualCamera != nextSettings.VirtualCamera ||
-                                   oldSettings.SpoutOutput != nextSettings.SpoutOutput;
-        var filterChanged = oldSettings.FlipHorizontal != nextSettings.FlipHorizontal ||
-                            oldSettings.Rotation != nextSettings.Rotation ||
-                            oldSettings.PrivacyMute != nextSettings.PrivacyMute ||
-                            oldSettings.OrientationMode != nextSettings.OrientationMode ||
-                            oldSettings.SuperResolution4K != nextSettings.SuperResolution4K ||
-                            outputRoutingChanged || virtualCamera?.RequiresFormatChange(nextSettings)==true;
+                                   oldSettings.SpoutOutput != nextSettings.SpoutOutput ||
+                                   !string.Equals(oldSettings.SpoutChannelName, nextSettings.SpoutChannelName, StringComparison.Ordinal);
+        var virtualFilterChanged = oldSettings.FlipHorizontal != nextSettings.FlipHorizontal ||
+                                   oldSettings.Rotation != nextSettings.Rotation ||
+                                   oldSettings.OrientationMode != nextSettings.OrientationMode ||
+                                   oldSettings.SuperResolution4K != nextSettings.SuperResolution4K ||
+                                   outputRoutingChanged || virtualCamera?.RequiresFormatChange(nextSettings) == true;
+        var previewFilterChanged = virtualFilterChanged || oldSettings.PrivacyMute != nextSettings.PrivacyMute;
         settings = nextSettings.Clone();
         if (settings.PrivacyMute && recorder.IsRecording) StopRecording();
         // UI stores empty paths for automatic discovery; retain the resolved runtime paths.
@@ -191,6 +194,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         if (string.IsNullOrWhiteSpace(settings.FfplayPath)) settings.FfplayPath = oldSettings.FfplayPath;
         if (settings.AutoPcIp) settings.PcIp = oldSettings.PcIp;
         adb.UpdateSettings(settings);
+        audioEngine.UpdateSettings(settings);
         virtualCamera?.UpdateSettings(settings);
         virtualCamera?.SetPreviewEnabled(settings.Preview && previewActive);
 
@@ -199,14 +203,14 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         adaptiveBitrate = targetBitrate;
         stableSeconds = 0;
 
-        if (filterChanged) {
+        if (previewFilterChanged) {
             if (!outputRoutingChanged || oldSettings.FlipHorizontal != settings.FlipHorizontal ||
                 oldSettings.Rotation != settings.Rotation || oldSettings.PrivacyMute != settings.PrivacyMute ||
                 oldSettings.OrientationMode != settings.OrientationMode || oldSettings.SuperResolution4K != settings.SuperResolution4K) {
                 previewBootstrapped = false;
                 previewDecoder?.UpdateFilter(settings);
             }
-            if (virtualCamera != null || settings.VirtualCamera || settings.SpoutOutput) {
+            if (virtualFilterChanged && (virtualCamera != null || settings.VirtualCamera || settings.SpoutOutput)) {
                 {
                     var old = virtualCamera;
                     virtualCamera = null;
@@ -258,7 +262,10 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             oldSettings.ShutterSpeedNs != nextSettings.ShutterSpeedNs ||
             oldSettings.ManualWbKelvin != nextSettings.ManualWbKelvin ||
             oldSettings.Stabilization != nextSettings.Stabilization ||
-            oldSettings.StabilizationMode != nextSettings.StabilizationMode;
+            oldSettings.StabilizationMode != nextSettings.StabilizationMode ||
+            oldSettings.AudioEnabled != nextSettings.AudioEnabled ||
+            oldSettings.AudioSource != nextSettings.AudioSource ||
+            oldSettings.AudioNoiseSuppression != nextSettings.AudioNoiseSuppression;
 
         if (effectiveTransport == "usb" && oldSettings.BatteryProtect != nextSettings.BatteryProtect) {
             await adb.SetBatteryCharging(!nextSettings.BatteryProtect, ct);
@@ -300,7 +307,11 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     shutterSpeedNs = nextSettings.ShutterSpeedNs,
                     manualWbKelvin = nextSettings.ManualWbKelvin,
                     stabilization = nextSettings.Stabilization,
-                    stabilizationMode = nextSettings.StabilizationMode
+                    stabilizationMode = nextSettings.StabilizationMode,
+                    audioEnabled = nextSettings.AudioEnabled,
+                    audioPort = nextSettings.AudioPort,
+                    audioSource = nextSettings.AudioSource,
+                    audioNoiseSuppression = nextSettings.AudioNoiseSuppression
                 };
                 var msg = H3HProtocol.Json(H3HMessageType.Command, 1, cmd, 0);
                 await aoa.WriteAsync(msg, ct);
@@ -503,6 +514,10 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
 
             if (PairedWifi) {
                 effectiveTransport = "wifi";
+                if (settings.AutoPcIp || string.IsNullOrWhiteSpace(settings.PcIp) || settings.PcIp == "127.0.0.1") {
+                    var phoneAddr = IPAddress.TryParse(Settings.EndpointHost(settings.PhoneIp), out var pa) ? pa : null;
+                    settings.PcIp = WifiDiscoveryService.ResolveBestLocalIpv4(phoneAddr);
+                }
             } else if (settings.Transport == "direct") {
                 effectiveTransport = "direct";
             } else if (settings.Transport == "auto") {
@@ -650,6 +665,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         effectiveTransport = transport;
         inputLifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var inputToken = inputLifetime.Token;
+        audioEngine.Start(transport, settings.AudioPort, settings, inputToken);
 
         if (transport == "direct") {
             aoa = new AoaController();
@@ -668,7 +684,11 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 manualIso = settings.ManualIso, shutterSpeedNs = settings.ShutterSpeedNs,
                 manualWbKelvin = settings.ManualWbKelvin,
                 stabilization = settings.Stabilization,
-                stabilizationMode = settings.StabilizationMode
+                stabilizationMode = settings.StabilizationMode,
+                audioEnabled = settings.AudioEnabled,
+                audioPort = settings.AudioPort,
+                audioSource = settings.AudioSource,
+                audioNoiseSuppression = settings.AudioNoiseSuppression
             }), ct);
             inputTask = Guard(() => ReceiveDirect(aoa, inputToken));
         } else if (transport == "wifi") {
@@ -852,6 +872,10 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     power = PowerTelemetry.From(j);
                     Interlocked.Exchange(ref lastTelemetry, Environment.TickCount64);
                 } catch (JsonException) { }
+                continue;
+            }
+            if (message.Type == H3HMessageType.Audio) {
+                audioEngine.SubmitMessage(message);
                 continue;
             }
             if (message.Type != H3HMessageType.VideoFrame) continue;
@@ -1148,7 +1172,8 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 effectiveTransport == "direct" ? "USB accessory" : adb.Serial, TransportLabel(effectiveTransport), resolution, settings.Fps, fps, rate, encodedMbps,
                 Interlocked.Read(ref packets), elapsed.Elapsed,
                 !settings.Obs ? L.Get("s_26dcd29019b8") : ffmpeg?.HasExited == false ? "running · RTP copy" : "restarting", thermal, statusDetails, power,
-                lost, recovered, Volatile.Read(ref droppedFrames), estimatedLatencyMs, lastFace, connectionManager.State));
+                lost, recovered, Volatile.Read(ref droppedFrames), estimatedLatencyMs, lastFace, connectionManager.State,
+                audioEngine.Active, audioEngine.PeakDb, audioEngine.RmsDb));
 
             try {
                 if (effectiveTransport == "usb") {
@@ -1265,6 +1290,11 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                             connectionManager.OnConnected("usb");
                             log(L.Get("s_46fc98a37b32"));
                         }
+                    } else if (PairedWifi) {
+                        RequestIdr();
+                        SendWifiControl(WifiPairing.StreamCommand(settings));
+                        recoveryAttempt = 0;
+                        connectionManager.OnConnected("wifi");
                     } else {
                         await adb.Connect(ct);
                         RefreshExpectedPhoneAddress();
@@ -1324,6 +1354,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             await previewDecoder.DisposeAsync();
             previewDecoder = null;
         }
+        await audioEngine.DisposeAsync();
 
         using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(12));
         await adb.Stop(cleanup.Token);

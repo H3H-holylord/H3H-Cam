@@ -1,6 +1,5 @@
 package com.h3h.s8cam
 
-import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicLong
 
 object StreamStats {
@@ -11,6 +10,9 @@ object StreamStats {
     val retransmitted = AtomicLong()
     val nackRequests = AtomicLong()
     val dropped = AtomicLong()
+    val audioPackets = AtomicLong()
+    @Volatile var audioActive = false
+    @Volatile var audioLevelDb = -90.0
     @Volatile var running = false
     @Volatile var state = "Остановлено"
     @Volatile var codec = "—"
@@ -23,7 +25,8 @@ object StreamStats {
     @Volatile var snapshot = "{}"
     fun reset() {
         frames.set(0); encodedBytes.set(0); sentBytes.set(0); packets.set(0); dropped.set(0)
-        retransmitted.set(0); nackRequests.set(0); targetBitrate = 0
+        retransmitted.set(0); nackRequests.set(0); audioPackets.set(0); targetBitrate = 0
+        audioActive = false; audioLevelDb = -90.0
         codec = "starting"; actualFps = 0; highSpeed = false; resolution = "—"; camera = "—"
         controls = ""; state = "Запуск"; running = true
     }

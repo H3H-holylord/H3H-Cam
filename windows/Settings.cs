@@ -5,7 +5,37 @@ using System.Text.Json;
 namespace S8Cam;
 
 public sealed class Settings {
+    public static int ActiveInstance { get; set; } = 1;
+
     public string Language { get; set; } = "auto";
+    public string UiTheme { get; set; } = "cine_rig"; // "cine_rig" | "nordic_atelier"
+    public bool MiniControllerMode { get; set; } = false;
+    public string PrivacySlateMode { get; set; } = "studio_card"; // "studio_card" | "blurred_freeze" | "custom_image" | "black"
+    public string PrivacySlateTitle { get; set; } = "СКОРО ВЕРНУСЬ";
+    public string PrivacySlateImage { get; set; } = "";
+    public string LutPath { get; set; } = "none"; // "none" | "builtin:kodak2383" | "builtin:arri_warm" | "builtin:nordic_clean" | file.cube
+    public float LutStrength { get; set; } = 0.85f;
+    public string VideoScopeMode { get; set; } = "none"; // "none" | "waveform" | "parade" | "histogram"
+    public bool FalseColor { get; set; } = false;
+    public float FocusSlotA { get; set; } = 0.35f;
+    public float FocusSlotB { get; set; } = 2.50f;
+    public float FocusPullDurationSec { get; set; } = 0.80f;
+    public bool AudioEnabled { get; set; } = false;
+    public int AudioPort { get; set; } = 5004;
+    public string AudioSource { get; set; } = "voice_comm"; // "voice_comm" | "camcorder" | "unprocessed" | "mic"
+    public bool AudioNoiseSuppression { get; set; } = true;
+    public double AudioGainDb { get; set; } = 0.0;
+    public bool AudioMuted { get; set; } = false;
+    public bool AudioMonitorEnabled { get; set; } = true;
+    public int AudioDelayMs { get; set; } = 45;
+    public string AudioOutputDevice { get; set; } = "default";
+    public string SpoutChannelName { get; set; } = "H3HCam";
+    public bool ObsWsEnabled { get; set; } = false;
+    public string ObsWsUrl { get; set; } = "ws://127.0.0.1:4455";
+    public string ObsWsPassword { get; set; } = "";
+    public string ObsTargetScene { get; set; } = "";
+    public string ObsAudioInputName { get; set; } = "";
+    public bool ObsEcoMode { get; set; } = false;
     public string Transport { get; set; } = "auto";
     [System.Text.Json.Serialization.JsonIgnore] public string WifiPairSession { get; set; } = "";
     public string PhoneIp { get; set; } = "192.168.1.100";
@@ -148,7 +178,7 @@ public sealed class Settings {
         CameraKey != next.CameraKey || ForceSamsungLegacy != next.ForceSamsungLegacy ||
         Transport != next.Transport || DeviceSerial != next.DeviceSerial || PhoneIp != next.PhoneIp ||
         PcIp != next.PcIp || AutoPcIp != next.AutoPcIp || RtpPort != next.RtpPort || UsbPort != next.UsbPort ||
-        ObsPort != next.ObsPort || PreviewPort != next.PreviewPort || Obs != next.Obs ||
+        ObsPort != next.ObsPort || PreviewPort != next.PreviewPort || AudioPort != next.AudioPort || Obs != next.Obs ||
         AdbPath != next.AdbPath || FfmpegPath != next.FfmpegPath;
 
     public Settings Clone() {
@@ -168,6 +198,7 @@ public sealed class Settings {
         Obs = source.Obs;
         VirtualCamera = source.VirtualCamera;
         SpoutOutput = source.SpoutOutput;
+        if (!string.IsNullOrWhiteSpace(source.SpoutChannelName)) SpoutChannelName = source.SpoutChannelName;
         WifiFriendly = source.WifiFriendly;
         WifiLimitMbps = source.WifiLimitMbps;
         AdaptiveBitrate = source.AdaptiveBitrate;
@@ -184,6 +215,18 @@ public sealed class Settings {
         Contrast = source.Contrast;
         Saturation = source.Saturation;
         ColorProfile = source.ColorProfile;
+        LutPath = source.LutPath;
+        LutStrength = source.LutStrength;
+        VideoScopeMode = source.VideoScopeMode;
+        FalseColor = source.FalseColor;
+        FocusSlotA = source.FocusSlotA;
+        FocusSlotB = source.FocusSlotB;
+        FocusPullDurationSec = source.FocusPullDurationSec;
+        AudioEnabled = source.AudioEnabled;
+        AudioSource = source.AudioSource;
+        AudioNoiseSuppression = source.AudioNoiseSuppression;
+        AudioGainDb = source.AudioGainDb;
+        AudioDelayMs = source.AudioDelayMs;
         BackgroundEffect = source.BackgroundEffect;
         BackgroundBlurStrength = source.BackgroundBlurStrength;
         AiSegmentation = source.AiSegmentation;
@@ -222,32 +265,55 @@ public sealed class Settings {
     }
 
     private static string? DataDirOverride => Environment.GetEnvironmentVariable("H3HCAM_DATA_DIR");
-    public static string DataDir => string.IsNullOrWhiteSpace(DataDirOverride)
-        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "H3HCam")
-        : Path.GetFullPath(DataDirOverride);
+    public static string DataDir {
+        get {
+            if (!string.IsNullOrWhiteSpace(DataDirOverride)) return Path.GetFullPath(DataDirOverride);
+            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "H3HCam");
+            return ActiveInstance > 1 ? Path.Combine(root, $"instance-{ActiveInstance}") : root;
+        }
+    }
     public static string FilePath => Path.Combine(DataDir, "settings.json");
 
     public static string LegacyDataDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "S8Cam");
     public static string LegacyFilePath => Path.Combine(LegacyDataDir, "settings.json");
 
+    public static Settings CreateDefaultForInstance(int instance) {
+        var s = new Settings();
+        if (instance > 1) {
+            int offset = (instance - 1) * 10;
+            s.RtpPort = 5000 + offset;
+            s.ObsPort = 5001 + offset;
+            s.UsbPort = 5002 + offset;
+            s.PreviewPort = 5003 + offset;
+            s.AudioPort = 5004 + offset;
+            s.SpoutChannelName = $"H3HCam_{instance}";
+            s.SpoutOutput = true;
+            s.VirtualCamera = false;
+        }
+        return s;
+    }
+
     public static Settings Load(string? filePath = null) {
         var path = filePath ?? FilePath;
-        if (filePath == null && string.IsNullOrWhiteSpace(DataDirOverride) && !File.Exists(path) && File.Exists(LegacyFilePath)) {
+        if (filePath == null && ActiveInstance <= 1 && string.IsNullOrWhiteSpace(DataDirOverride) && !File.Exists(path) && File.Exists(LegacyFilePath)) {
             try {
                 Directory.CreateDirectory(DataDir);
                 File.Copy(LegacyFilePath, FilePath, true);
             } catch { }
         }
-        if (!File.Exists(path)) return new();
+        if (!File.Exists(path)) return CreateDefaultForInstance(ActiveInstance);
         try {
-            var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) ?? new();
+            var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) ?? CreateDefaultForInstance(ActiveInstance);
             s.CustomPresets ??= new(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(s.SpoutChannelName)) {
+                s.SpoutChannelName = ActiveInstance > 1 ? $"H3HCam_{ActiveInstance}" : "H3HCam";
+            }
             // Preserve explicit user choices. Device mode compatibility is checked after discovery.
             return s;
         } catch (JsonException) {
             File.Copy(path, path + ".invalid-" + DateTime.Now.ToString("yyyyMMddHHmmss"), true);
-            return new();
+            return CreateDefaultForInstance(ActiveInstance);
         }
     }
 
@@ -271,9 +337,9 @@ public sealed class Settings {
             throw new ArgumentException(L.Get("s_90d9aad47dc6"));
         if (Width is < 320 or > 4096 || Height is < 240 or > 2160)
             throw new ArgumentException(L.Get("s_1d671cfd8ae9"));
-        if (new[] { RtpPort, UsbPort, ObsPort, PreviewPort }.Any(p => p is < 1024 or > 65534))
+        if (new[] { RtpPort, UsbPort, ObsPort, PreviewPort, AudioPort }.Any(p => p is < 1024 or > 65534))
             throw new ArgumentException(L.Get("s_1bfbfdf0fbf0"));
-        var udp = new[] { RtpPort, ObsPort, PreviewPort };
+        var udp = new[] { RtpPort, ObsPort, PreviewPort, AudioPort };
         if (udp.Distinct().Count() != udp.Length)
             throw new ArgumentException(L.Get("s_b5ed8f998589"));
         if (transport == "wifi" && (!PhoneEndpoint(PhoneIp) || !Ipv4(PcIp)))
@@ -295,6 +361,10 @@ public sealed class Settings {
         if (ManualIso is < 0 or > 25600) throw new ArgumentException("ISO: 0–25600");
         if (ShutterSpeedNs is < 0 or > 1_000_000_000L) throw new ArgumentException("Shutter: 0–1s");
         if (ManualWbKelvin < 0 || (ManualWbKelvin > 0 && (ManualWbKelvin < 2000 || ManualWbKelvin > 10000))) throw new ArgumentException("WB Kelvin: 2000–10000");
+        if (!float.IsFinite(LutStrength) || LutStrength is < 0f or > 1f) throw new ArgumentException("LUT Strength: 0.0–1.0");
+        if (!float.IsFinite(FocusPullDurationSec) || FocusPullDurationSec is < 0.05f or > 10.0f) throw new ArgumentException("Focus Pull Duration: 0.05–10s");
+        if (AudioSource is not ("voice_comm" or "camcorder" or "unprocessed")) AudioSource = "voice_comm";
+        if (string.IsNullOrWhiteSpace(SpoutChannelName)) SpoutChannelName = "H3HCam";
         if (!Preview && !Obs && !VirtualCamera && !SpoutOutput) throw new ArgumentException(L.Get("s_ac16ac51f54c"));
     }
 
