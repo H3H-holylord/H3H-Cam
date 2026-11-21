@@ -427,7 +427,11 @@ public partial class MainWindow : Window {
                 >= 1.15f => 1,
                 _ => 0
             };
-            ForceSamsungLegacy.IsChecked = settings.ForceSamsungLegacy;
+            CameraApiChoice.SelectedIndex = settings.EffectiveCameraApi switch {
+                "camera2" => 1,
+                "camera1" => 2,
+                _ => 0
+            };
             FlipHorizontal.IsChecked = settings.FlipHorizontal;
             RotationChoice.SelectedIndex = settings.Rotation switch { 90 => 1, 180 => 2, 270 => 3, _ => 0 };
             BrightnessSlider.Value = settings.Brightness;
@@ -854,7 +858,8 @@ public partial class MainWindow : Window {
                 4 => 3.0f,
                 _ => 1.0f
             },
-            ForceSamsungLegacy = ForceSamsungLegacy.IsChecked == true,
+            CameraApi = CameraApiChoice.SelectedIndex switch { 1 => "camera2", 2 => "camera1", _ => "auto" },
+            ForceSamsungLegacy = CameraApiChoice.SelectedIndex == 2,
             FlipHorizontal = FlipHorizontal.IsChecked == true,
             Rotation = RotationChoice.SelectedIndex switch { 1 => 90, 2 => 180, 3 => 270, _ => 0 },
             Brightness = BrightnessSlider.Value,
@@ -2870,6 +2875,7 @@ public partial class MainWindow : Window {
                     current.ScreenOff,
                     current.Torch,
                     current.Zoom,
+                    current.CameraApi,
                     current.ForceSamsungLegacy,
                     current.Focus,
                     current.Exposure,

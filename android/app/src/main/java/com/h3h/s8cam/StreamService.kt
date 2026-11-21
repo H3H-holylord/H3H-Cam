@@ -92,9 +92,10 @@ class StreamService : Service() {
                 val effectiveNewFps = if (next.powerMode == "saving" || next.fps <= 30) 30 else next.fps
                 val fpsChanged = effectiveOldFps != effectiveNewFps
                 val lensChanged = current.cameraKey != next.cameraKey
+                val apiChanged = current.effectiveCameraApi != next.effectiveCameraApi
                 settings = next
                 syncAudioPipeline(next)
-                if ((lensChanged || (fpsChanged && camera?.isLegacy() != true)) && sender != null) {
+                if ((lensChanged || apiChanged || (fpsChanged && camera?.isLegacy() != true)) && sender != null) {
                     val activeSender = sender!!
                     camera?.stop()
                     camera = CameraStreamer(this, next, { message -> worker.post { recover(generation, message) } }) { data, _, _, pts ->
@@ -123,7 +124,7 @@ class StreamService : Service() {
                 current.codec == next.codec &&
                 current.transport == next.transport &&
                 current.port == next.port &&
-                current.forceSamsungLegacy == next.forceSamsungLegacy
+                current.effectiveCameraApi == next.effectiveCameraApi
 
             if (canHotUpdate) {
                 settings = next
@@ -287,15 +288,18 @@ class StreamService : Service() {
                     audioEnabled = command.optBoolean("audioEnabled", current.audioEnabled),
                     audioPort = command.optInt("audioPort", current.audioPort),
                     audioSource = command.optString("audioSource", current.audioSource),
-                    audioNoiseSuppression = command.optBoolean("audioNoiseSuppression", current.audioNoiseSuppression)
+                    audioNoiseSuppression = command.optBoolean("audioNoiseSuppression", current.audioNoiseSuppression),
+                    cameraApi = command.optString("cameraApi", current.cameraApi).takeIf { it in listOf("auto", "camera2", "camera1") } ?: current.cameraApi,
+                    forceSamsungLegacy = command.optBoolean("forceSamsungLegacy", current.forceSamsungLegacy)
                 )
                 val effectiveOldFps = if (current.powerMode == "saving" || current.fps <= 30) 30 else current.fps
                 val effectiveNewFps = if (next.powerMode == "saving" || next.fps <= 30) 30 else next.fps
                 val fpsChanged = effectiveOldFps != effectiveNewFps
                 val lensChanged = current.cameraKey != newKey
+                val apiChanged = current.effectiveCameraApi != next.effectiveCameraApi
                 settings = next
                 syncAudioPipeline(next)
-                if ((lensChanged || (fpsChanged && camera?.isLegacy() != true)) && camera != null && sender != null) {
+                if ((lensChanged || apiChanged || (fpsChanged && camera?.isLegacy() != true)) && camera != null && sender != null) {
                     val activeSender = sender!!
                     camera?.stop()
                     camera = CameraStreamer(this, next, { message -> worker.post { recover(generation, message) } }) { data, _, _, pts ->
@@ -347,7 +351,9 @@ class StreamService : Service() {
             audioEnabled = command.optBoolean("audioEnabled", current.audioEnabled),
             audioPort = command.optInt("audioPort", current.audioPort),
             audioSource = command.optString("audioSource", current.audioSource),
-            audioNoiseSuppression = command.optBoolean("audioNoiseSuppression", current.audioNoiseSuppression)
+            audioNoiseSuppression = command.optBoolean("audioNoiseSuppression", current.audioNoiseSuppression),
+            cameraApi = command.optString("cameraApi", current.cameraApi).takeIf { it in listOf("auto", "camera2", "camera1") } ?: current.cameraApi,
+            forceSamsungLegacy = command.optBoolean("forceSamsungLegacy", current.forceSamsungLegacy)
         )
         try {
             next.validate()
@@ -355,6 +361,7 @@ class StreamService : Service() {
             val effectiveNewFps = if (next.powerMode == "saving" || next.fps <= 30) 30 else next.fps
             val fpsChanged = effectiveOldFps != effectiveNewFps
             val lensChanged = current.cameraKey != next.cameraKey
+            val apiChanged = current.effectiveCameraApi != next.effectiveCameraApi
             val resChanged = current.width != next.width || current.height != next.height
             val codecChanged = current.codec != next.codec
 
@@ -368,7 +375,7 @@ class StreamService : Service() {
             val activeSender = sender ?: return
             syncAudioPipeline(next)
 
-            if (camera == null || resChanged || codecChanged || lensChanged || (fpsChanged && camera?.isLegacy() != true)) {
+            if (camera == null || resChanged || codecChanged || lensChanged || apiChanged || (fpsChanged && camera?.isLegacy() != true)) {
                 camera?.stop()
                 camera = CameraStreamer(this, next, { message -> worker.post { recover(g, message) } }) { data, _, _, pts ->
                     offerVideo(activeSender, data, pts)

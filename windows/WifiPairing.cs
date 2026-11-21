@@ -34,7 +34,8 @@ public static class WifiPairing {
         manualIso = s.ManualIso, shutterSpeedNs = s.ShutterSpeedNs, manualWbKelvin = s.ManualWbKelvin,
         stabilization = s.Stabilization, stabilizationMode = s.StabilizationMode,
         audioEnabled = s.AudioEnabled, audioPort = s.AudioPort,
-        audioSource = s.AudioSource, audioNoiseSuppression = s.AudioNoiseSuppression
+        audioSource = s.AudioSource, audioNoiseSuppression = s.AudioNoiseSuppression,
+        cameraApi = s.EffectiveCameraApi, forceSamsungLegacy = s.EffectiveCameraApi == "camera1"
     };
     public static byte[] Control(object command, string session) {
         var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(command))!;

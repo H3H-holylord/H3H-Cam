@@ -100,6 +100,9 @@ public sealed class Settings {
     public bool SkinSmoothing { get; set; } = false;
     public bool BatteryProtect { get; set; } = true;
     public bool ForceSamsungLegacy { get; set; } = false;
+    public string CameraApi { get; set; } = "auto"; // "auto", "camera2", "camera1"
+    public string EffectiveCameraApi =>
+        CameraApi is "camera1" or "camera2" ? CameraApi : (ForceSamsungLegacy ? "camera1" : "auto");
     public string Codec { get; set; } = "h264";
     public int ManualIso { get; set; } = 0;
     public long ShutterSpeedNs { get; set; } = 0L;
@@ -175,7 +178,7 @@ public sealed class Settings {
     // These changes require new transport bindings, SDP or decoder dimensions.
     public bool RequiresStreamRestart(Settings next) =>
         Width != next.Width || Height != next.Height || Fps != next.Fps || Codec != next.Codec ||
-        CameraKey != next.CameraKey || ForceSamsungLegacy != next.ForceSamsungLegacy ||
+        CameraKey != next.CameraKey || EffectiveCameraApi != next.EffectiveCameraApi ||
         Transport != next.Transport || DeviceSerial != next.DeviceSerial || PhoneIp != next.PhoneIp ||
         PcIp != next.PcIp || AutoPcIp != next.AutoPcIp || RtpPort != next.RtpPort || UsbPort != next.UsbPort ||
         ObsPort != next.ObsPort || PreviewPort != next.PreviewPort || AudioPort != next.AudioPort || Obs != next.Obs ||
@@ -261,6 +264,7 @@ public sealed class Settings {
         ThermalGuard = source.ThermalGuard;
         ThermalThresholdC = source.ThermalThresholdC;
         ForceSamsungLegacy = source.ForceSamsungLegacy;
+        CameraApi = source.CameraApi;
         QualityProfile = source.QualityProfile;
     }
 
@@ -308,6 +312,11 @@ public sealed class Settings {
             s.CustomPresets ??= new(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrWhiteSpace(s.SpoutChannelName)) {
                 s.SpoutChannelName = ActiveInstance > 1 ? $"H3HCam_{ActiveInstance}" : "H3HCam";
+            }
+            if (s.CameraApi is not ("auto" or "camera2" or "camera1")) {
+                s.CameraApi = s.ForceSamsungLegacy ? "camera1" : "auto";
+            } else if (s.CameraApi == "auto" && s.ForceSamsungLegacy) {
+                s.CameraApi = "camera1";
             }
             // Preserve explicit user choices. Device mode compatibility is checked after discovery.
             return s;

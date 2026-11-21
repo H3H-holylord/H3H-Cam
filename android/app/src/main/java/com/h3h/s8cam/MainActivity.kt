@@ -113,6 +113,35 @@ open class MainActivity : androidx.activity.ComponentActivity() {
             }
         }
         root.addView(languagePicker, LinearLayout.LayoutParams(-1, dp(48)))
+        addText(getString(R.string.camera_api_label), 12f)
+        val cameraApiValues = listOf("auto", "camera2", "camera1")
+        val currentApi = StreamSettings.load(this).effectiveCameraApi
+        val cameraApiPicker = Spinner(this).apply {
+            setPopupBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.rgb(28, 40, 57)))
+            adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf(
+                    getString(R.string.camera_api_auto),
+                    getString(R.string.camera_api_camera2),
+                    getString(R.string.camera_api_camera1)
+                )) {
+                override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                    super.getView(position, convertView, parent).apply { (this as TextView).setTextColor(Color.WHITE) }
+                override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                    super.getDropDownView(position, convertView, parent).apply { (this as TextView).setTextColor(Color.WHITE) }
+            }
+            setSelection(cameraApiValues.indexOf(currentApi).coerceAtLeast(0))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    val value = cameraApiValues[position]
+                    val loaded = StreamSettings.load(this@MainActivity)
+                    if (value == loaded.effectiveCameraApi) return
+                    loaded.copy(cameraApi = value, forceSamsungLegacy = (value == "camera1")).save(this@MainActivity)
+                    recreate()
+                }
+            }
+        }
+        root.addView(cameraApiPicker, LinearLayout.LayoutParams(-1, dp(48)))
         addText(getString(R.string.controlled_by_windows), 12f, Color.rgb(54, 215, 180))
         addText(getString(R.string.camera_settings_hint), 16f, Color.WHITE)
 
@@ -127,7 +156,7 @@ open class MainActivity : androidx.activity.ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 11)
         }
 
-        val routes = try { CameraCatalog.list(this) } catch (_: Exception) { emptyList() }
+        val routes = try { CameraCatalog.list(this, currentApi) } catch (_: Exception) { emptyList() }
         val modeCount = routes.sumOf { it.modes.size }
         val sixtyCount = routes.sumOf { camera -> camera.modes.count { 60 in it.fps } }
         val wifiIp = WifiNetBinder.localWifiIpv4(this)

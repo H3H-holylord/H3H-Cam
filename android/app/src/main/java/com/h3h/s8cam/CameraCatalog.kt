@@ -2,6 +2,7 @@ package com.h3h.s8cam
 
 import android.content.Context
 import android.graphics.SurfaceTexture
+import android.hardware.Camera
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.MediaCodec
@@ -38,7 +39,11 @@ data class CameraRoute(
 object CameraCatalog {
     private val commonFps = listOf(15, 24, 25, 30, 50, 60)
 
-    fun list(context: Context): List<CameraRoute> {
+    fun list(context: Context, cameraApi: String = "auto"): List<CameraRoute> {
+        if (cameraApi == "camera1") {
+            val legacyRoutes = listLegacy()
+            if (legacyRoutes.isNotEmpty()) return legacyRoutes
+        }
         val manager = context.getSystemService(CameraManager::class.java)
         val result = mutableListOf<CameraRoute>()
         val publicIds = manager.cameraIdList.toSet()
@@ -46,13 +51,13 @@ object CameraCatalog {
             try {
                 val logical = manager.getCameraCharacteristics(logicalId)
                 val physicalIds = if (Build.VERSION.SDK_INT >= 28) logical.physicalCameraIds.sorted() else emptyList()
-                result += route(logicalId, null, logical, logical)
+                result += route(logicalId, null, logical, logical, cameraApi)
                 // A public physical ID is already listed as an independently openable camera.
                 // Add nested routes only for modules that must be addressed through a logical ID.
                 physicalIds.filterNot { it in publicIds }.forEach { physicalId ->
                     try {
                         val physical = manager.getCameraCharacteristics(physicalId)
-                        result += route(logicalId, physicalId, physical, logical)
+                        result += route(logicalId, physicalId, physical, logical, cameraApi)
                     } catch (_: Exception) {
                     }
                 }
@@ -62,11 +67,74 @@ object CameraCatalog {
         return result.filter { it.modes.isNotEmpty() }.distinctBy { it.key }
     }
 
+    @Suppress("DEPRECATION")
+    fun listLegacy(): List<CameraRoute> {
+        val count = try { Camera.getNumberOfCameras() } catch (_: Exception) { 0 }
+        if (count <= 0) return emptyList()
+        val result = mutableListOf<CameraRoute>()
+        val isSamsung = Build.MANUFACTURER.equals("samsung", true)
+        for (i in 0 until count) {
+            var cam: Camera? = null
+            try {
+                val info = Camera.CameraInfo()
+                Camera.getCameraInfo(i, info)
+                val facing = when (info.facing) {
+                    Camera.CameraInfo.CAMERA_FACING_BACK -> "Задняя"
+                    Camera.CameraInfo.CAMERA_FACING_FRONT -> "Фронтальная"
+                    else -> "Камера"
+                }
+                cam = Camera.open(i)
+                val p = cam.parameters
+                val sizes = p.supportedPreviewSizes.orEmpty()
+                    .filter { it.width >= 640 && it.height >= 360 && it.width <= 4096 && it.height <= 2160 }
+                    .distinctBy { "${it.width}x${it.height}" }
+                val ranges = p.supportedPreviewFpsRange.orEmpty().filter { it != null && it.size >= 2 }
+                val maxRangeFps = (ranges.maxOfOrNull { it[1] } ?: 30_000) / 1000
+                val hfrValues = (p.get("video-hfr-values") ?: "").split(',').map { it.trim() }
+                val hasHfr60 = "60" in hfrValues
+                val flash = p.supportedFlashModes?.contains(Camera.Parameters.FLASH_MODE_TORCH) == true
+                val modes = sizes.mapNotNull { size ->
+                    val fps = commonFps.filter { f ->
+                        val withinRange = ranges.any { f * 1000 in it[0]..it[1] } || f <= maxRangeFps
+                        val hfrOk = f == 60 && (hasHfr60 || (isSamsung && size.width == 1920 && size.height == 1080))
+                        (withinRange || hfrOk) && H264Encoder.supports(size.width, size.height, f)
+                    }.toMutableList()
+                    if (fps.isEmpty() && H264Encoder.supports(size.width, size.height, 30)) fps += 30
+                    if (60 !in fps && (maxRangeFps >= 60 || hasHfr60) && H264Encoder.supports(size.width, size.height, 60)) {
+                        fps += 60
+                    }
+                    if (fps.isEmpty()) null else VideoMode(size.width, size.height, fps.distinct().sorted())
+                }.sortedWith(
+                    compareByDescending<VideoMode> { it.width.toLong() * it.height }
+                        .thenByDescending { abs(it.width.toDouble() / it.height - 16.0 / 9.0) < 0.02 }
+                ).distinctBy { it.key }
+                if (modes.isNotEmpty()) {
+                    result += CameraRoute(
+                        key = "legacy:$i",
+                        cameraId = "legacy:$i",
+                        physicalId = null,
+                        label = "$facing · Camera1 ID $i",
+                        facing = facing,
+                        focalLengths = emptyList(),
+                        minimumFocusDistance = 0f,
+                        flash = flash,
+                        modes = modes
+                    )
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { cam?.release() } catch (_: Exception) {}
+            }
+        }
+        return result
+    }
+
     private fun route(
         logicalId: String,
         physicalId: String?,
         characteristics: CameraCharacteristics,
-        logicalCharacteristics: CameraCharacteristics
+        logicalCharacteristics: CameraCharacteristics,
+        cameraApi: String
     ): CameraRoute {
         val facing = facingName(characteristics.get(CameraCharacteristics.LENS_FACING))
         val focal = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
@@ -81,7 +149,7 @@ object CameraCatalog {
             .filter { it.width >= 640 && it.height >= 360 && it.width <= 4096 && it.height <= 2160 }
             .mapNotNull { size ->
                 val (regular, highSpeed) = supportedFps(characteristics, size, physicalId == null)
-                val samsung = if (SamsungLegacyCapture.supports(logicalId, physicalId, size.width, size.height) &&
+                val samsung = if (SamsungLegacyCapture.supports(logicalId, physicalId, size.width, size.height, false, cameraApi) &&
                     H264Encoder.supports(size.width, size.height, 60)) listOf(60) else emptyList()
                 val fps = (regular + highSpeed + samsung).distinct().sorted()
                 if (fps.isEmpty()) null else VideoMode(size.width, size.height, fps, highSpeed)

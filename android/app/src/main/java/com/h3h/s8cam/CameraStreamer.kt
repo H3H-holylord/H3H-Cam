@@ -177,15 +177,17 @@ class CameraStreamer(
         handler.post {
             try {
                 if (stopped) return@post
-                val routes = CameraCatalog.list(context)
+                val activeApi = settings.effectiveCameraApi
+                val routes = CameraCatalog.list(context, activeApi)
                 val route = CameraCatalog.resolve(routes, settings.cameraKey)
                 val (mode, actualFps) = CameraCatalog.resolveMode(route, settings.width, settings.height, settings.fps)
-                val selectedCharacteristics = manager.getCameraCharacteristics(route.physicalId ?: route.cameraId)
-                val highSpeed = mode.isHighSpeed(actualFps)
-                val useLegacy = (actualFps == 60 || actualFps == 30) && SamsungLegacyCapture.supports(
-                    route.cameraId, route.physicalId, mode.width, mode.height, settings.forceSamsungLegacy)
+                val useLegacy = SamsungLegacyCapture.supports(
+                    route.cameraId, route.physicalId, mode.width, mode.height, settings.forceSamsungLegacy, activeApi
+                )
+                val highSpeed = !useLegacy && mode.isHighSpeed(actualFps)
+                val selectedCharacteristics = if (useLegacy) null else manager.getCameraCharacteristics(route.physicalId ?: route.cameraId)
                 val fpsRange = if (useLegacy) Range(actualFps, actualFps) else selectFpsRange(
-                    selectedCharacteristics,
+                    selectedCharacteristics!!,
                     Size(mode.captureWidth, mode.captureHeight),
                     actualFps,
                     highSpeed
@@ -219,7 +221,9 @@ class CameraStreamer(
                 e.start()
 
                 if (useLegacy) {
-                    legacy = SamsungLegacyCapture(handler, onError).also { it.start(e.inputSurface, settings) }
+                    legacy = SamsungLegacyCapture(handler, onError).also {
+                        it.start(e.inputSurface, settings, route.cameraId, mode.width, mode.height, actualFps)
+                    }
                     return@post
                 }
 
@@ -234,7 +238,7 @@ class CameraStreamer(
                         if (stopped) { device.close(); return }
                         camera = device
                         try {
-                            createSession(device, route, selectedCharacteristics, fpsRange, highSpeed)
+                            createSession(device, route, selectedCharacteristics!!, fpsRange, highSpeed)
                         } catch (ex: Exception) {
                             onError("Настройка камеры: ${ex.message}")
                         }

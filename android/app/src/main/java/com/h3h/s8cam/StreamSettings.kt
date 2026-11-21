@@ -29,6 +29,7 @@ data class StreamSettings(
     val autoFramingSpeed: Float = 1.0f,
     val autoFramingDeadzone: Float = 0.05f,
     val forceSamsungLegacy: Boolean = false,
+    val cameraApi: String = "auto",
     val codec: String = "h264",
     val manualIso: Int = 0,
     val shutterSpeedNs: Long = 0L,
@@ -42,9 +43,15 @@ data class StreamSettings(
     val discoveryPort: Int = 5005
 ) {
     val port get() = if (transport == "usb") usbPort else wifiPort
+    val effectiveCameraApi get() = when {
+        cameraApi == "camera1" || cameraApi == "camera2" -> cameraApi
+        forceSamsungLegacy -> "camera1"
+        else -> "auto"
+    }
 
     fun validate() {
         require(transport in listOf("wifi", "usb", "direct")) { "Неизвестный режим" }
+        require(cameraApi in listOf("auto", "camera2", "camera1")) { "Неверный Camera API" }
         require(stabilizationMode in listOf("standard", "strong")) { "Неверный режим стабилизации" }
         require(wifiPort in 1024..65534 && usbPort in 1024..65535 && audioPort in 1024..65535) { "Порты: 1024–65535" }
         require(fps in 10..60) { "FPS: 10–60" }
@@ -77,6 +84,7 @@ data class StreamSettings(
             .putFloat("auto_framing_speed", autoFramingSpeed)
             .putFloat("auto_framing_deadzone", autoFramingDeadzone)
             .putBoolean("force_samsung_legacy", forceSamsungLegacy)
+            .putString("camera_api", cameraApi)
             .putString("codec", codec)
             .putInt("manual_iso", manualIso)
             .putLong("shutter_speed_ns", shutterSpeedNs)
@@ -119,6 +127,10 @@ data class StreamSettings(
             autoFramingSpeed = i.getFloatExtra("auto_framing_speed", autoFramingSpeed),
             autoFramingDeadzone = i.getFloatExtra("auto_framing_deadzone", autoFramingDeadzone),
             forceSamsungLegacy = i.getBooleanExtra("force_legacy", i.getBooleanExtra("force_samsung_legacy", forceSamsungLegacy)),
+            cameraApi = i.getStringExtra("camera_api")?.takeIf { it in listOf("auto", "camera2", "camera1") }
+                ?: if (i.hasExtra("force_legacy") || i.hasExtra("force_samsung_legacy")) {
+                    if (i.getBooleanExtra("force_legacy", i.getBooleanExtra("force_samsung_legacy", false))) "camera1" else "auto"
+                } else cameraApi,
             codec = i.getStringExtra("codec") ?: codec,
             manualIso = i.getIntExtra("manual_iso", manualIso),
             shutterSpeedNs = i.getLongExtra("shutter_speed_ns", shutterSpeedNs),
@@ -158,7 +170,8 @@ data class StreamSettings(
         putExtra("auto_framing_zoom", autoFramingZoom)
         putExtra("auto_framing_speed", autoFramingSpeed)
         putExtra("auto_framing_deadzone", autoFramingDeadzone)
-        putExtra("force_legacy", forceSamsungLegacy)
+        putExtra("force_legacy", forceSamsungLegacy || cameraApi == "camera1")
+        putExtra("camera_api", cameraApi)
         putExtra("codec", codec)
         putExtra("manual_iso", manualIso)
         putExtra("shutter_speed_ns", shutterSpeedNs)
@@ -204,6 +217,8 @@ data class StreamSettings(
                 autoFramingSpeed = p.getFloat("auto_framing_speed", 1.0f),
                 autoFramingDeadzone = p.getFloat("auto_framing_deadzone", 0.05f),
                 forceSamsungLegacy = p.getBoolean("force_samsung_legacy", false),
+                cameraApi = p.getString("camera_api", null)?.takeIf { it in listOf("auto", "camera2", "camera1") }
+                    ?: if (p.getBoolean("force_samsung_legacy", false)) "camera1" else "auto",
                 codec = p.getString("codec", "h264")!!,
                 manualIso = p.getInt("manual_iso", 0),
                 shutterSpeedNs = p.getLong("shutter_speed_ns", 0L),

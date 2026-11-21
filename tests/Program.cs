@@ -487,6 +487,10 @@ internal static class Program {
         settings.ColorProfile = "teal_orange";
         settings.ForceSamsungLegacy = true;
         settings.Validate("wifi");
+        Assert(settings.EffectiveCameraApi == "camera1", "legacy flag maps to camera1 effective api");
+        settings.CameraApi = "camera2";
+        Assert(settings.EffectiveCameraApi == "camera2", "explicit camera2 overrides legacy flag");
+        settings.CameraApi = "auto";
         Assert(settings.Torch && settings.Zoom == 2.0f && settings.LockAeAwb && settings.FaceTracking && settings.AutoFraming && settings.CompositionGrid && settings.FocusPeaking && settings.ZebraPattern && settings.ColorProfile == "teal_orange" && settings.BatteryProtect && settings.ForceSamsungLegacy, "torch, zoom, lock ae/awb, face tracking, auto framing, composition grid, focus peaking, zebra, color profile, battery protect, force legacy settings");
         settings.Zoom = 0.5f;
         ExpectThrows<ArgumentException>(() => settings.Validate("wifi"), "invalid zoom under 1.0");

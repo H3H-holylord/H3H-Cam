@@ -14,8 +14,8 @@ android {
         applicationId = "com.h3h.s8cam"
         minSdk = 26
         targetSdk = 37
-        versionCode = 50
-        versionName = "5.0.0"
+        versionCode = 51
+        versionName = "5.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -267,7 +267,14 @@
 
          <TextBlock Text="{DynamicResource s_05b653a0de26}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
          <ComboBox x:Name="CameraChoice" DisplayMemberPath="DisplayLabel" SelectedValuePath="Key" SelectionChanged="CameraChoice_Changed"/>
-         <TextBlock x:Name="CameraHint" Text="{DynamicResource s_3b4ff0e8a258}" Foreground="{DynamicResource TextMutedBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,-2,4,10"/>
+         <TextBlock x:Name="CameraHint" Text="{DynamicResource s_3b4ff0e8a258}" Foreground="{DynamicResource TextMutedBrush}" FontSize="11.5" TextWrapping="Wrap" Margin="0,-2,4,8"/>
+
+         <TextBlock Text="{DynamicResource camera_api_label}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"/>
+         <ComboBox x:Name="CameraApiChoice" ToolTip="{DynamicResource camera_api_tooltip}" Margin="0,4,0,10">
+          <ComboBoxItem Content="{DynamicResource camera_api_auto}"/>
+          <ComboBoxItem Content="{DynamicResource camera_api_camera2}"/>
+          <ComboBoxItem Content="{DynamicResource camera_api_camera1}"/>
+         </ComboBox>
 
          <Grid>
           <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
@@ -692,7 +699,6 @@
            <TextBlock Text="ffplay.exe"/><DockPanel><Button Content="…" DockPanel.Dock="Right" Tag="FfplayPath" Click="Browse_Click" Padding="10,5" Margin="0,4,0,10"/><TextBox x:Name="FfplayPath"/></DockPanel>
            <TextBlock Text="obs64.exe"/><DockPanel><Button Content="…" DockPanel.Dock="Right" Tag="ObsPath" Click="Browse_Click" Padding="10,5" Margin="0,4,0,10"/><TextBox x:Name="ObsPath"/></DockPanel>
            <TextBlock Text="{DynamicResource s_190aa0849977}"/><TextBox x:Name="PreviewPort"/>
-           <CheckBox x:Name="ForceSamsungLegacy" Content="{DynamicResource s_c86334f82b1e}" Margin="0,6,0,0"/>
           </StackPanel>
          </Expander>
         </StackPanel>

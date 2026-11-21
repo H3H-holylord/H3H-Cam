@@ -257,7 +257,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             oldSettings.AutoFramingDeadzone != nextSettings.AutoFramingDeadzone ||
             oldSettings.PowerMode != nextSettings.PowerMode ||
             oldSettings.CameraKey != nextSettings.CameraKey ||
-            oldSettings.ForceSamsungLegacy != nextSettings.ForceSamsungLegacy ||
+            oldSettings.EffectiveCameraApi != nextSettings.EffectiveCameraApi ||
             oldSettings.ManualIso != nextSettings.ManualIso ||
             oldSettings.ShutterSpeedNs != nextSettings.ShutterSpeedNs ||
             oldSettings.ManualWbKelvin != nextSettings.ManualWbKelvin ||
@@ -311,7 +311,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     audioEnabled = nextSettings.AudioEnabled,
                     audioPort = nextSettings.AudioPort,
                     audioSource = nextSettings.AudioSource,
-                    audioNoiseSuppression = nextSettings.AudioNoiseSuppression
+                    audioNoiseSuppression = nextSettings.AudioNoiseSuppression,
+                    cameraApi = nextSettings.EffectiveCameraApi,
+                    forceSamsungLegacy = nextSettings.EffectiveCameraApi == "camera1"
                 };
                 var msg = H3HProtocol.Json(H3HMessageType.Command, 1, cmd, 0);
                 await aoa.WriteAsync(msg, ct);
@@ -688,7 +690,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 audioEnabled = settings.AudioEnabled,
                 audioPort = settings.AudioPort,
                 audioSource = settings.AudioSource,
-                audioNoiseSuppression = settings.AudioNoiseSuppression
+                audioNoiseSuppression = settings.AudioNoiseSuppression,
+                cameraApi = settings.EffectiveCameraApi,
+                forceSamsungLegacy = settings.EffectiveCameraApi == "camera1"
             }), ct);
             inputTask = Guard(() => ReceiveDirect(aoa, inputToken));
         } else if (transport == "wifi") {

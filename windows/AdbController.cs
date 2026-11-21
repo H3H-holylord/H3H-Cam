@@ -374,10 +374,11 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
     private IEnumerable<AdbDevice> PhysicalUsb() => devices.Where(d =>
         !d.IsNetwork && !d.Serial.StartsWith("emulator-", StringComparison.OrdinalIgnoreCase));
 
-    public async Task<PhoneCapabilities> GetCapabilities(CancellationToken ct) {
+    public async Task<PhoneCapabilities> GetCapabilities(CancellationToken ct, string? cameraApi = null) {
         if (Device == null) throw new InvalidOperationException(L.Get("s_abc00512d845"));
+        var api = cameraApi ?? settings.EffectiveCameraApi;
         var result = await Command(ct, "shell", "content", "call", "--uri", CapabilitiesUri,
-            "--method", "capabilities");
+            "--method", "capabilities", "--arg", api);
         var error = ParseBundleValue(result, "error");
         if (!string.IsNullOrWhiteSpace(error))
             throw new InvalidDataException(L.Get("s_a688c90dd313") + error);
@@ -461,7 +462,8 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             "--ef", "auto_framing_zoom", settings.AutoFramingZoom.ToString(CultureInfo.InvariantCulture),
             "--ef", "auto_framing_speed", settings.AutoFramingSpeed.ToString(CultureInfo.InvariantCulture),
             "--ef", "auto_framing_deadzone", settings.AutoFramingDeadzone.ToString(CultureInfo.InvariantCulture),
-            "--ez", "force_legacy", settings.ForceSamsungLegacy ? "true" : "false",
+            "--ez", "force_legacy", settings.EffectiveCameraApi == "camera1" ? "true" : "false",
+            "--es", "camera_api", settings.EffectiveCameraApi,
             "--es", "codec", settings.Codec,
             "--ei", "manual_iso", settings.ManualIso.ToString(CultureInfo.InvariantCulture),
             "--el", "shutter_speed_ns", settings.ShutterSpeedNs.ToString(CultureInfo.InvariantCulture),
@@ -511,7 +513,8 @@ public sealed class AdbController(Settings initialSettings, Action<string> log) 
             "--ef", "auto_framing_zoom", nextSettings.AutoFramingZoom.ToString(CultureInfo.InvariantCulture),
             "--ef", "auto_framing_speed", nextSettings.AutoFramingSpeed.ToString(CultureInfo.InvariantCulture),
             "--ef", "auto_framing_deadzone", nextSettings.AutoFramingDeadzone.ToString(CultureInfo.InvariantCulture),
-            "--ez", "force_legacy", nextSettings.ForceSamsungLegacy ? "true" : "false",
+            "--ez", "force_legacy", nextSettings.EffectiveCameraApi == "camera1" ? "true" : "false",
+            "--es", "camera_api", nextSettings.EffectiveCameraApi,
             "--es", "codec", nextSettings.Codec,
             "--ei", "manual_iso", nextSettings.ManualIso.ToString(CultureInfo.InvariantCulture),
             "--el", "shutter_speed_ns", nextSettings.ShutterSpeedNs.ToString(CultureInfo.InvariantCulture),

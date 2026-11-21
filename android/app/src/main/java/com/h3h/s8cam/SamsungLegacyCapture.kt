@@ -13,7 +13,7 @@ import android.view.Surface
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** Verified Samsung HAL1 fast-fps path; other phones continue using Camera2. */
+/** Универсальный захват через оригинальный Camera1 API (HAL1) для любых смартфонов + Samsung fast-fps. */
 @Suppress("DEPRECATION")
 class SamsungLegacyCapture(private val handler: Handler, private val onError: (String) -> Unit) {
     companion object {
@@ -24,12 +24,93 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
             "SM-G950F", "SM-G950N", "SM-G955F", "SM-G955N"
         )
 
-        fun supports(cameraId: String, physicalId: String?, width: Int, height: Int, forceLegacy: Boolean = false) =
-            Build.MANUFACTURER.equals("samsung", true) &&
-                (forceLegacy || SupportedModels.contains(Build.MODEL)) &&
+        fun parseLegacyCameraIndex(cameraId: String, cameraCount: Int): Int {
+            if (cameraCount <= 0) return -1
+            val trimmed = cameraId.trim()
+            if (trimmed.isEmpty() || trimmed == "auto") return 0
+            val raw = if (trimmed.startsWith("legacy:")) trimmed.removePrefix("legacy:") else trimmed
+            val index = raw.toIntOrNull() ?: return -1
+            return if (index in 0 until cameraCount) index else -1
+        }
+
+        fun shouldUseLegacy(
+            cameraApi: String,
+            forceLegacy: Boolean,
+            manufacturer: String,
+            model: String,
+            cameraId: String,
+            physicalId: String?,
+            width: Int,
+            height: Int,
+            camera1Count: Int
+        ): Boolean {
+            if (cameraApi == "camera2") return false
+            val validLegacyCamera = physicalId == null && parseLegacyCameraIndex(cameraId, camera1Count) >= 0
+            if (cameraApi == "camera1" || forceLegacy || cameraId.startsWith("legacy:")) {
+                return validLegacyCamera
+            }
+            return manufacturer.equals("samsung", true) &&
+                SupportedModels.contains(model) &&
                 cameraId == "0" && physicalId == null &&
                 width == 1920 && height == 1080
+        }
+
+        fun supports(
+            cameraId: String,
+            physicalId: String?,
+            width: Int,
+            height: Int,
+            forceLegacy: Boolean = false,
+            cameraApi: String = "auto"
+        ): Boolean {
+            val count = try { Camera.getNumberOfCameras() } catch (_: Exception) { 0 }
+            return shouldUseLegacy(
+                cameraApi = cameraApi,
+                forceLegacy = forceLegacy,
+                manufacturer = Build.MANUFACTURER ?: "",
+                model = Build.MODEL ?: "",
+                cameraId = cameraId,
+                physicalId = physicalId,
+                width = width,
+                height = height,
+                camera1Count = count
+            )
+        }
+
+        fun selectBestPreviewSize(supported: List<Pair<Int, Int>>, targetW: Int, targetH: Int): Pair<Int, Int> {
+            if (supported.isEmpty()) return targetW to targetH
+            supported.firstOrNull { it.first == targetW && it.second == targetH }?.let { return it }
+            val targetAspect = targetW.toDouble() / targetH.coerceAtLeast(1)
+            val targetArea = targetW.toLong() * targetH.toLong()
+            return supported.minByOrNull { (w, h) ->
+                val aspectPenalty = (kotlin.math.abs(w.toDouble() / h.coerceAtLeast(1) - targetAspect) * 20_000_000.0).toLong()
+                val areaDiff = kotlin.math.abs(w.toLong() * h.toLong() - targetArea)
+                aspectPenalty + areaDiff
+            } ?: (targetW to targetH)
+        }
+
+        fun selectBestFpsRange(supported: List<Pair<Int, Int>>, targetFps: Int): Pair<Int, Int>? {
+            if (supported.isEmpty()) return null
+            val target = targetFps * 1000
+            supported.firstOrNull { it.first == target && it.second == target }?.let { return it }
+            supported.filter { it.second == target }
+                .maxByOrNull { it.first }
+                ?.let { return it }
+            supported.filter { target in it.first..it.second }
+                .minWithOrNull(compareBy<Pair<Int, Int>> { it.second - it.first }.thenByDescending { it.first })
+                ?.let { return it }
+            return supported.filter { it.second >= target }
+                .minByOrNull { it.second - target }
+                ?: supported.maxByOrNull { it.second }
+        }
     }
+
+    private val isSamsung = Build.MANUFACTURER.equals("samsung", true)
+    private var outputWidth = 1920
+    private var outputHeight = 1080
+    private var previewWidth = 1920
+    private var previewHeight = 1080
+    private var cameraIndex = 0
 
     private var camera: Camera? = null
     private var texture: SurfaceTexture? = null
@@ -194,9 +275,78 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
         }
     }
 
-    fun start(surface: Surface, settings: StreamSettings) {
+    private fun applyFps(p: Camera.Parameters, effectiveFps: Int) {
+        val supported = p.supportedPreviewFpsRange?.mapNotNull {
+            if (it != null && it.size >= 2) it[0] to it[1] else null
+        }.orEmpty()
+        val chosen = selectBestFpsRange(supported, effectiveFps)
+        if (isSamsung && previewWidth == 1920 && previewHeight == 1080) {
+            if (effectiveFps >= 60) {
+                p.set("fast-fps-mode", 1)
+                p.set("preview-fps-range", "60000,60000")
+                p.set("preview-frame-rate", 60)
+                try { p.setPreviewFpsRange(60000, 60000) } catch (_: Exception) {}
+                try { p.setPreviewFrameRate(60) } catch (_: Exception) {}
+                return
+            } else {
+                p.set("fast-fps-mode", 0)
+            }
+        }
+        val hfrValues = p.get("video-hfr-values") ?: ""
+        if (effectiveFps >= 60 && hfrValues.split(',').any { it.trim() == "60" }) {
+            try { p.set("video-hfr", "60") } catch (_: Exception) {}
+        } else if (hfrValues.isNotEmpty()) {
+            try { p.set("video-hfr", "off") } catch (_: Exception) {}
+        }
+        if (chosen != null) {
+            try { p.setPreviewFpsRange(chosen.first, chosen.second) } catch (_: Exception) {}
+            try { p.set("preview-fps-range", "${chosen.first},${chosen.second}") } catch (_: Exception) {}
+            try { p.setPreviewFrameRate((chosen.second / 1000).coerceAtLeast(15)) } catch (_: Exception) {}
+        } else {
+            try { p.setPreviewFpsRange(effectiveFps * 1000, effectiveFps * 1000) } catch (_: Exception) {}
+            try { p.setPreviewFrameRate(effectiveFps) } catch (_: Exception) {}
+        }
+    }
+
+    private fun applyParametersSafe(c: Camera, p: Camera.Parameters, effectiveFps: Int, settings: StreamSettings) {
+        try {
+            c.parameters = p
+        } catch (ex: Exception) {
+            android.util.Log.w("S8Cam", "Camera1 full setParameters failed (${ex.message}), retrying standard params")
+            val clean = c.parameters
+            clean.setRecordingHint(true)
+            clean.setPreviewSize(previewWidth, previewHeight)
+            val supported = clean.supportedPreviewFpsRange?.mapNotNull {
+                if (it != null && it.size >= 2) it[0] to it[1] else null
+            }.orEmpty()
+            selectBestFpsRange(supported, effectiveFps)?.let { (minFps, maxFps) ->
+                try { clean.setPreviewFpsRange(minFps, maxFps) } catch (_: Exception) {}
+            }
+            val focus = when (settings.focus) {
+                "infinity" -> Camera.Parameters.FOCUS_MODE_INFINITY
+                "auto" -> Camera.Parameters.FOCUS_MODE_AUTO
+                else -> Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO
+            }
+            if (clean.supportedFocusModes?.contains(focus) == true) clean.focusMode = focus
+            clean.exposureCompensation = settings.exposure.coerceIn(clean.minExposureCompensation, clean.maxExposureCompensation)
+            c.parameters = clean
+        }
+    }
+
+    fun start(
+        surface: Surface,
+        settings: StreamSettings,
+        cameraId: String = "0",
+        width: Int = settings.width,
+        height: Int = settings.height,
+        targetFps: Int = settings.fps
+    ) {
         try {
             activeSettings = settings
+            outputWidth = width.coerceAtLeast(320)
+            outputHeight = height.coerceAtLeast(240)
+            val totalCameras = Camera.getNumberOfCameras()
+            cameraIndex = parseLegacyCameraIndex(cameraId, totalCameras).coerceAtLeast(0)
             display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
             check(EGL14.eglInitialize(display, null, 0, null, 0)) { "EGL initialize" }
             val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
@@ -232,31 +382,23 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
             GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-            texture = SurfaceTexture(textureId).apply {
-                setDefaultBufferSize(1920, 1080)
-                setOnFrameAvailableListener({ draw() }, handler)
-            }
-            camera = Camera.open(0)
+            camera = Camera.open(cameraIndex)
             val c = requireNotNull(camera)
             val p = c.parameters
-            p.setRecordingHint(true)
-            p.setPreviewSize(1920, 1080)
-            p.set("video-size", "1920x1080")
-            val effectiveFps = if (settings.powerMode == "saving" || settings.fps <= 30) 30 else 60
-            currentAppliedFastFps = if (effectiveFps == 60) 1 else 0
-            if (effectiveFps == 60) {
-                p.set("fast-fps-mode", 1)
-                p.set("preview-fps-range", "60000,60000")
-                p.set("preview-frame-rate", 60)
-                try { p.setPreviewFpsRange(60000, 60000) } catch (_: Exception) {}
-                try { p.setPreviewFrameRate(60) } catch (_: Exception) {}
-            } else {
-                p.set("fast-fps-mode", 0)
-                p.set("preview-fps-range", "30000,30000")
-                p.set("preview-frame-rate", 30)
-                try { p.setPreviewFpsRange(30000, 30000) } catch (_: Exception) {}
-                try { p.setPreviewFrameRate(30) } catch (_: Exception) {}
+            val supportedSizes = p.supportedPreviewSizes?.map { it.width to it.height }.orEmpty()
+            val chosenSize = selectBestPreviewSize(supportedSizes, outputWidth, outputHeight)
+            previewWidth = chosenSize.first
+            previewHeight = chosenSize.second
+            texture = SurfaceTexture(textureId).apply {
+                setDefaultBufferSize(previewWidth, previewHeight)
+                setOnFrameAvailableListener({ draw() }, handler)
             }
+            p.setRecordingHint(true)
+            p.setPreviewSize(previewWidth, previewHeight)
+            try { p.set("video-size", "${previewWidth}x${previewHeight}") } catch (_: Exception) {}
+            val effectiveFps = if (settings.powerMode == "saving") minOf(targetFps, 30) else targetFps.coerceIn(15, 60)
+            currentAppliedFastFps = if (effectiveFps >= 60) 1 else 0
+            applyFps(p, effectiveFps)
             val focus = when (settings.focus) {
                 "infinity" -> Camera.Parameters.FOCUS_MODE_INFINITY
                 "auto" -> Camera.Parameters.FOCUS_MODE_AUTO
@@ -288,14 +430,14 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
             p.exposureCompensation = settings.exposure.coerceIn(p.minExposureCompensation, p.maxExposureCompensation)
             if (settings.torch && p.supportedFlashModes?.contains(Camera.Parameters.FLASH_MODE_TORCH) == true) {
                 p.flashMode = Camera.Parameters.FLASH_MODE_TORCH
-                StreamStats.controls += "Подсветка (Samsung HAL1). "
+                StreamStats.controls += "Подсветка (Camera1). "
             }
             val isSuperSteady = settings.stabilization && settings.stabilizationMode == "strong"
             if (!settings.autoFraming && settings.zoom > 1.0f && p.isZoomSupported) {
                 val maxZoom = p.maxZoom
                 val target = ((settings.zoom - 1.0f) * (maxZoom / 4.0f)).toInt().coerceIn(0, maxZoom)
                 p.zoom = target
-                StreamStats.controls += "Зум ${settings.zoom}x (Samsung HAL1). "
+                StreamStats.controls += "Зум ${settings.zoom}x (Camera1). "
             } else if (!settings.autoFraming && isSuperSteady && p.isZoomSupported) {
                 p.zoom = (p.maxZoom * 0.08f).toInt().coerceAtLeast(1)
             } else if (p.isZoomSupported) {
@@ -310,20 +452,25 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
             if (p.isVideoStabilizationSupported) {
                 p.videoStabilization = settings.stabilization
             }
-            if (settings.stabilization) {
+            if (isSamsung && settings.stabilization) {
                 try { p.set("vdis", if (isSuperSteady) "on" else "off") } catch (_: Exception) {}
                 try { p.set("video-stabilization-mode", if (isSuperSteady) "1" else "0") } catch (_: Exception) {}
             }
-            c.parameters = p
+            applyParametersSafe(c, p, effectiveFps, settings)
             val accepted = c.parameters.previewSize
-            check(accepted.width == 1920 && accepted.height == 1080) { "Samsung replaced 1080p preview size" }
-            c.setErrorCallback { error, _ -> if (!closed) onError("Samsung camera error $error") }
+            if (accepted != null && (accepted.width != previewWidth || accepted.height != previewHeight)) {
+                previewWidth = accepted.width
+                previewHeight = accepted.height
+                texture?.setDefaultBufferSize(previewWidth, previewHeight)
+            }
+            c.setErrorCallback { error, _ -> if (!closed) onError("Camera1 error $error") }
             c.setPreviewTexture(texture)
             c.startPreview()
             if (settings.focus == "auto") c.autoFocus { _, _ -> }
             updateFaceTracking(c, settings.faceTracking, settings.autoFraming, settings.lockAeAwb)
-            StreamStats.controls += "Samsung fast-fps · 1080p60; фокус ${p.focusMode}. "
-            if (settings.focus == "manual") StreamStats.controls += "Ручная дистанция недоступна в этом режиме; автофокус. "
+            val apiTag = if (isSamsung && previewWidth == 1920 && previewHeight == 1080) "Samsung HAL1" else "Camera1 API"
+            StreamStats.controls += "$apiTag · ${previewWidth}x${previewHeight}@${effectiveFps}fps; фокус ${c.parameters.focusMode}. "
+            if (settings.focus == "manual") StreamStats.controls += "Ручная дистанция недоступна в Camera1; автофокус. "
             StreamStats.state = "Камера запущена"
         } catch (e: Exception) { close(); throw e }
     }
@@ -334,24 +481,12 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
             activeSettings = settings
             val p = c.parameters
             p.setRecordingHint(true)
-            p.setPreviewSize(1920, 1080)
-            p.set("video-size", "1920x1080")
-            val effectiveFps = if (settings.powerMode == "saving" || settings.fps <= 30) 30 else 60
-            val desiredFastFps = if (effectiveFps == 60) 1 else 0
+            p.setPreviewSize(previewWidth, previewHeight)
+            try { p.set("video-size", "${previewWidth}x${previewHeight}") } catch (_: Exception) {}
+            val effectiveFps = if (settings.powerMode == "saving") minOf(settings.fps, 30) else settings.fps.coerceIn(15, 60)
+            val desiredFastFps = if (effectiveFps >= 60) 1 else 0
             val fpsToggled = currentAppliedFastFps != desiredFastFps
-            if (effectiveFps == 60) {
-                p.set("fast-fps-mode", 1)
-                p.set("preview-fps-range", "60000,60000")
-                p.set("preview-frame-rate", 60)
-                try { p.setPreviewFpsRange(60000, 60000) } catch (_: Exception) {}
-                try { p.setPreviewFrameRate(60) } catch (_: Exception) {}
-            } else {
-                p.set("fast-fps-mode", 0)
-                p.set("preview-fps-range", "30000,30000")
-                p.set("preview-frame-rate", 30)
-                try { p.setPreviewFpsRange(30000, 30000) } catch (_: Exception) {}
-                try { p.setPreviewFrameRate(30) } catch (_: Exception) {}
-            }
+            applyFps(p, effectiveFps)
             val focus = when (settings.focus) {
                 "infinity" -> Camera.Parameters.FOCUS_MODE_INFINITY
                 "auto" -> Camera.Parameters.FOCUS_MODE_AUTO
@@ -403,7 +538,7 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
             if (p.isVideoStabilizationSupported) {
                 p.videoStabilization = settings.stabilization
             }
-            if (settings.stabilization) {
+            if (isSamsung && settings.stabilization) {
                 try { p.set("vdis", if (isSuperSteady) "on" else "off") } catch (_: Exception) {}
                 try { p.set("video-stabilization-mode", if (isSuperSteady) "1" else "0") } catch (_: Exception) {}
             }
@@ -426,16 +561,16 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
                         faceDetectionRunning = false
                     }
                     c.stopPreview()
-                    c.parameters = p
+                    applyParametersSafe(c, p, effectiveFps, settings)
                     c.setPreviewTexture(texture)
                     c.startPreview()
-                    android.util.Log.i("S8Cam", "Samsung HAL1 dynamic FPS switched to $effectiveFps fps (fast-fps-mode=$desiredFastFps)")
+                    android.util.Log.i("S8Cam", "Camera1 dynamic FPS switched to $effectiveFps fps")
                 } catch (e: Exception) {
                     android.util.Log.w("S8Cam", "Failed to restart preview on FPS switch: ${e.message}")
-                    c.parameters = p
+                    applyParametersSafe(c, p, effectiveFps, settings)
                 }
             } else {
-                c.parameters = p
+                applyParametersSafe(c, p, effectiveFps, settings)
             }
             if (settings.focus == "auto") c.autoFocus { _, _ -> }
             updateFaceTracking(c, settings.faceTracking, settings.autoFraming, settings.lockAeAwb)
@@ -450,22 +585,10 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
         try {
             val p = c.parameters
             p.setRecordingHint(true)
-            p.setPreviewSize(1920, 1080)
-            p.set("video-size", "1920x1080")
-            val effectiveFps = if (activeSettings?.powerMode == "saving" || (activeSettings?.fps ?: 60) <= 30) 30 else 60
-            if (effectiveFps == 60) {
-                p.set("fast-fps-mode", 1)
-                p.set("preview-fps-range", "60000,60000")
-                p.set("preview-frame-rate", 60)
-                try { p.setPreviewFpsRange(60000, 60000) } catch (_: Exception) {}
-                try { p.setPreviewFrameRate(60) } catch (_: Exception) {}
-            } else {
-                p.set("fast-fps-mode", 0)
-                p.set("preview-fps-range", "30000,30000")
-                p.set("preview-frame-rate", 30)
-                try { p.setPreviewFpsRange(30000, 30000) } catch (_: Exception) {}
-                try { p.setPreviewFrameRate(30) } catch (_: Exception) {}
-            }
+            p.setPreviewSize(previewWidth, previewHeight)
+            try { p.set("video-size", "${previewWidth}x${previewHeight}") } catch (_: Exception) {}
+            val effectiveFps = if (activeSettings?.powerMode == "saving") minOf(activeSettings?.fps ?: 30, 30) else (activeSettings?.fps ?: 30).coerceIn(15, 60)
+            applyFps(p, effectiveFps)
             if (p.maxNumFocusAreas > 0) {
                 val x = (normX.coerceIn(0.05f, 0.95f) * 2000 - 1000).toInt()
                 val y = (normY.coerceIn(0.05f, 0.95f) * 2000 - 1000).toInt()
@@ -507,7 +630,7 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
                 if (skipAlternateFrame) return
             }
 
-            GLES20.glViewport(0, 0, 1920, 1080)
+            GLES20.glViewport(0, 0, outputWidth, outputHeight)
             GLES20.glUseProgram(program)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)

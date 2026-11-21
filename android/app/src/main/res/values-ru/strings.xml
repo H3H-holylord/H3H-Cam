@@ -55,4 +55,8 @@
     <string name="qr_confirm">Подключить камеру к компьютеру %1$s? Настройки будут заданы в Windows. Отладка USB не нужна.</string>
     <string name="wifi_use_qr">Компьютер %1$s найден. Для подключения покажите QR-код в Windows и нажмите «Сканировать QR» здесь.</string>
     <string name="wifi_eperm_hint">Доступ приложения к Wi-Fi заблокирован системой телефона (EPERM).\n1) Откройте Настройки телефона → Приложения → H3H Cam → Передача данных / Сетевые подключения и разрешите «Wi-Fi» (на Vivo: iМенеджер → Управление трафиком → Контроль сети).\n2) Если включён VPN, отключите его или снимите галочку «Блокировать соединения без VPN».</string>
+    <string name="camera_api_label">Camera API</string>
+    <string name="camera_api_auto">Авто (Camera2)</string>
+    <string name="camera_api_camera2">Camera2 API</string>
+    <string name="camera_api_camera1">Оригинальный API камеры (Camera1 / 60 FPS)</string>
 </resources>

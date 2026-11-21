@@ -15,17 +15,21 @@ class CapabilitiesProvider : ContentProvider() {
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
         if (method != "capabilities") return Bundle().apply { putString("error", "unknown method") }
-        val json = buildJson(requireNotNull(context))
+        val api = arg?.takeIf { it in listOf("auto", "camera2", "camera1") }
+        val json = buildJson(requireNotNull(context), api)
         return Bundle().apply {
             putString("data", Base64.encodeToString(json.toByteArray(Charsets.UTF_8), Base64.NO_WRAP))
         }
     }
 
     companion object {
-      fun buildJson(context: android.content.Context): String {
-        val cameras = CameraCatalog.list(context)
+      fun buildJson(context: android.content.Context, cameraApi: String? = null): String {
+        val activeApi = cameraApi?.takeIf { it in listOf("auto", "camera2", "camera1") }
+            ?: StreamSettings.load(context).effectiveCameraApi
+        val cameras = CameraCatalog.list(context, activeApi)
         return JSONObject()
             .put("version", 2)
+            .put("cameraApi", activeApi)
             .put("model", Build.MODEL)
             .put("manufacturer", Build.MANUFACTURER)
             .put("sdk", Build.VERSION.SDK_INT)
