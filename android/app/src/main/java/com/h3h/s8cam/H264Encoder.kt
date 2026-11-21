@@ -17,6 +17,7 @@ class H264Encoder(
     private val fps: Int,
     private val bitrate: Int,
     private val codecName: String = "h264",
+    private val inputFps: Int = fps,
     private val onError: (String) -> Unit,
     private val onEncodedData: (ByteArray, Boolean, Boolean, Long) -> Unit
 ) {
@@ -27,7 +28,7 @@ class H264Encoder(
         bitrate: Int,
         onError: (String) -> Unit,
         onEncodedData: (ByteArray, Boolean, Boolean, Long) -> Unit
-    ) : this(width, height, fps, bitrate, "h264", onError, onEncodedData)
+    ) : this(width, height, fps, bitrate, "h264", fps, onError, onEncodedData)
 
     private enum class Tuning { LOW_LATENCY, STANDARD, MINIMAL }
 
@@ -95,20 +96,35 @@ class H264Encoder(
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, effectiveBitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-            // Surface input can run faster than the output (e.g. Camera2 120 -> 60).
-            // Drop before encoding; preserve capture PTS instead of duplicating frames.
-            if (Build.VERSION.SDK_INT >= 29) setFloat("max-fps-to-encoder", fps.toFloat())
+            // Устанавливаем max-fps-to-encoder ТОЛЬКО при реальном даунсэмплинге (например 120 -> 60).
+            // При 60 -> 60 жёсткий лимит 60.0f на Qualcomm/AOSP дропает каждый второй кадр из-за джиттера PTS.
+            if (Build.VERSION.SDK_INT >= 29) {
+                maxFpsToEncoder(fps, inputFps)?.let { setFloat("max-fps-to-encoder", it) }
+            }
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
 
             if (tuning != Tuning.MINIMAL) {
                 setInteger(MediaFormat.KEY_PRIORITY, 0)
+                if (Build.VERSION.SDK_INT >= 23) {
+                    setInteger(MediaFormat.KEY_OPERATING_RATE, maxOf(fps, inputFps))
+                }
                 val encoderCaps = candidate.caps.encoderCapabilities
-                val bitrateMode = when {
-                    encoderCaps?.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR) == true ->
-                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
-                    encoderCaps?.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR) == true ->
-                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
-                    else -> null
+                val bitrateMode = if (preferVbr(fps)) {
+                    when {
+                        encoderCaps?.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR) == true ->
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+                        encoderCaps?.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR) == true ->
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
+                        else -> null
+                    }
+                } else {
+                    when {
+                        encoderCaps?.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR) == true ->
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
+                        encoderCaps?.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR) == true ->
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+                        else -> null
+                    }
                 }
                 bitrateMode?.let { setInteger(MediaFormat.KEY_BITRATE_MODE, it) }
                 if (!isHevc) {
@@ -280,6 +296,11 @@ class H264Encoder(
                 return requested.coerceIn(range.lower, range.upper)
             }
         }
+
+        fun maxFpsToEncoder(outputFps: Int, inputFps: Int): Float? =
+            if (inputFps > outputFps) outputFps.toFloat() + 1.5f else null
+
+        fun preferVbr(outputFps: Int): Boolean = outputFps >= 60
 
         private fun encodersForMime(mime: String): List<EncoderBase> {
             return try {

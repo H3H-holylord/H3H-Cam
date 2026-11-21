@@ -4,9 +4,9 @@
 
 ## Install
 
-Download the [full Portable 4.0.13](https://github.com/H3H-holylord/H3H-Cam/releases/download/v4.0.13/H3H-Cam-4.0.13-Portable.zip). Extract **all** files to a folder and run `H3HCam Receiver.exe`. Do not run it inside the ZIP viewer. Leave tool paths empty: .NET, FFmpeg/FFplay, ADB and the AI model are included.
+Download the [full Portable 5.0.2](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.1/H3H-Cam-5.0.2-Portable.zip). Extract **all** files to a folder and run `H3HCam Receiver.exe`. Do not run it inside the ZIP viewer. Leave tool paths empty: .NET, FFmpeg/FFplay, ADB and the AI model are included.
 
-Install `H3H-Cam-4.0.7.apk` on the phone and grant camera permission. You can transfer the APK and open it on Android, allowing installation from that source when prompted. For installation from Windows, enable developer options and USB debugging, connect a data cable, unlock the phone and run `Install-on-phone.cmd`. Confirm Android's debugging prompt. The installer requires exactly one authorized phone and updates the APK without deleting its data.
+Install `H3H-Cam-5.0.2.apk` on the phone and grant camera (and microphone) permission. Use the **Camera API** selector (`Auto`, `Camera2 API`, `Original Camera1 API`) on Android or in the Windows Camera tab if 60 FPS or certain lenses are restricted in Camera2. You can transfer the APK and open it on Android, allowing installation from that source when prompted. For installation from Windows, enable developer options and USB debugging, connect a data cable, unlock the phone and run `Install-on-phone.cmd`. Confirm Android's debugging prompt. The installer requires exactly one authorized phone and updates the APK without deleting its data.
 
 ## Language
 

@@ -450,9 +450,9 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
                 p.autoWhiteBalanceLock = settings.lockAeAwb
             }
             if (p.isVideoStabilizationSupported) {
-                p.videoStabilization = settings.stabilization
+                p.videoStabilization = settings.stabilization && effectiveFps < 60
             }
-            if (isSamsung && settings.stabilization) {
+            if (isSamsung && settings.stabilization && effectiveFps < 60) {
                 try { p.set("vdis", if (isSuperSteady) "on" else "off") } catch (_: Exception) {}
                 try { p.set("video-stabilization-mode", if (isSuperSteady) "1" else "0") } catch (_: Exception) {}
             }
@@ -536,9 +536,9 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
                 p.autoWhiteBalanceLock = settings.lockAeAwb
             }
             if (p.isVideoStabilizationSupported) {
-                p.videoStabilization = settings.stabilization
+                p.videoStabilization = settings.stabilization && effectiveFps < 60
             }
-            if (isSamsung && settings.stabilization) {
+            if (isSamsung && settings.stabilization && effectiveFps < 60) {
                 try { p.set("vdis", if (isSuperSteady) "on" else "off") } catch (_: Exception) {}
                 try { p.set("video-stabilization-mode", if (isSuperSteady) "1" else "0") } catch (_: Exception) {}
             }

@@ -214,6 +214,7 @@ class CameraStreamer(
                     fps = actualFps,
                     bitrate = settings.bitrate,
                     codecName = settings.codec,
+                    inputFps = if (highSpeed) fpsRange.upper else actualFps,
                     onError = onError,
                     onEncodedData = onEncodedData
                 )
@@ -334,14 +335,21 @@ class CameraStreamer(
 
         if (highSpeed) {
             device.createConstrainedHighSpeedCaptureSession(listOf(surface), callback, handler)
-        } else if (Build.VERSION.SDK_INT >= 28 && route.physicalId != null) {
-            val output = OutputConfiguration(surface).apply { setPhysicalCameraId(route.physicalId) }
+        } else if (Build.VERSION.SDK_INT >= 28) {
+            val output = OutputConfiguration(surface).apply {
+                if (route.physicalId != null) setPhysicalCameraId(route.physicalId)
+            }
             val config = SessionConfiguration(
                 SessionConfiguration.SESSION_REGULAR,
                 listOf(output),
                 executor,
                 callback
             )
+            // Передаём sessionParameters на этапе создания сессии — стандартное требование Camera2 (API 28+),
+            // чтобы любой HAL (Qualcomm CamX, MediaTek, Exynos, Tensor) выбрал 60 FPS режим сенсора сразу.
+            try {
+                config.sessionParameters = buildRepeatingRequest(device, c, fpsRange, false, settings).build()
+            } catch (_: Exception) {}
             device.createCaptureSession(config)
         } else {
             @Suppress("DEPRECATION")
@@ -524,14 +532,17 @@ class CameraStreamer(
                 request.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
             }
         }
-        // Hardware OIS (optical) and EIS (video gyro) stabilization to eliminate desk/tripod shaking
+        // Аппаратная OIS (оптическая) работает на любых FPS; программная EIS на многих HAL режет 60 FPS до 30 FPS.
         if (!highSpeed) {
             val oisModes = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: intArrayOf()
             val videoStabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: intArrayOf()
-            if (s.stabilization) {
-                if (oisModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)) {
-                    request.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
-                }
+            val allowEis = s.stabilization && fpsRange.upper < 60
+            if (s.stabilization && oisModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)) {
+                request.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
+            } else if (!s.stabilization && oisModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)) {
+                request.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+            }
+            if (allowEis) {
                 val wantsSuperSteady = s.stabilizationMode == "strong"
                 val previewStab = 2 // CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION
                 if (wantsSuperSteady && videoStabModes.contains(previewStab)) {
@@ -539,13 +550,8 @@ class CameraStreamer(
                 } else if (videoStabModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)) {
                     request.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)
                 }
-            } else {
-                if (oisModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)) {
-                    request.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
-                }
-                if (videoStabModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)) {
-                    request.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
-                }
+            } else if (videoStabModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)) {
+                request.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
             }
             if (c.get(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE) == true)
                 request.set(CaptureRequest.CONTROL_AE_LOCK, s.lockAeAwb)

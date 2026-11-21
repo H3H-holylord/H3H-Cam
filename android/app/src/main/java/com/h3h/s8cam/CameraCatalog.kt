@@ -238,15 +238,11 @@ object CameraCatalog {
         if (!textureOnly && regular.isEmpty() && H264Encoder.supports(size.width, size.height, 30)) {
             regular += 30
         }
-        if (!textureOnly && !(size.width == 2560 && size.height == 1440) &&
-            maxSensorFps >= 60 && 60 !in regular && H264Encoder.supports(size.width, size.height, 60)) {
-            regular += 60
-        }
         val highSpeed = if (allowHighSpeed && Build.VERSION.SDK_INT >= 23) {
             try {
                 if (map.highSpeedVideoSizes?.contains(size) == true) {
                     map.getHighSpeedVideoFpsRangesFor(size)
-                        .filter { it.lower == it.upper }
+                        .filter { it.lower == it.upper || it.upper == 60 }
                         .flatMap { range -> commonFps.filter { fps ->
                             fps == range.upper || (Build.VERSION.SDK_INT >= 29 && fps == 60 &&
                                 range.upper > fps && range.upper % fps == 0)
@@ -259,6 +255,11 @@ object CameraCatalog {
                 emptyList()
             }
         } else emptyList()
+        if (!textureOnly && !(size.width == 2560 && size.height == 1440) &&
+            maxSensorFps >= 60 && 60 !in regular && 60 !in highSpeed &&
+            H264Encoder.supports(size.width, size.height, 60)) {
+            regular += 60
+        }
         return regular.distinct().sorted() to highSpeed
     }
 
