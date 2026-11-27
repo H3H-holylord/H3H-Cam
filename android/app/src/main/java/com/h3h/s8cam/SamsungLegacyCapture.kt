@@ -292,8 +292,14 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
                 p.set("fast-fps-mode", 0)
             }
         }
+        val hsrValues = p.get("video-hsr-values") ?: ""
         val hfrValues = p.get("video-hfr-values") ?: ""
-        if (effectiveFps >= 60 && hfrValues.split(',').any { it.trim() == "60" }) {
+        if (effectiveFps >= 60 && hsrValues.split(',').any { it.trim() == "60" }) {
+            try { p.set("video-hsr", "60") } catch (_: Exception) {}
+        } else if (hsrValues.isNotEmpty()) {
+            try { p.set("video-hsr", "off") } catch (_: Exception) {}
+        }
+        if (effectiveFps >= 60 && hsrValues.isEmpty() && hfrValues.split(',').any { it.trim() == "60" }) {
             try { p.set("video-hfr", "60") } catch (_: Exception) {}
         } else if (hfrValues.isNotEmpty()) {
             try { p.set("video-hfr", "off") } catch (_: Exception) {}
@@ -467,7 +473,8 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
             c.setPreviewTexture(texture)
             c.startPreview()
             if (settings.focus == "auto") c.autoFocus { _, _ -> }
-            updateFaceTracking(c, settings.faceTracking, settings.autoFraming, settings.lockAeAwb)
+            val allowFace = if (effectiveFps >= 60 && !isSamsung) settings.autoFraming else settings.faceTracking
+            updateFaceTracking(c, allowFace, settings.autoFraming, settings.lockAeAwb)
             val apiTag = if (isSamsung && previewWidth == 1920 && previewHeight == 1080) "Samsung HAL1" else "Camera1 API"
             StreamStats.controls += "$apiTag · ${previewWidth}x${previewHeight}@${effectiveFps}fps; фокус ${c.parameters.focusMode}. "
             if (settings.focus == "manual") StreamStats.controls += "Ручная дистанция недоступна в Camera1; автофокус. "
@@ -573,7 +580,8 @@ class SamsungLegacyCapture(private val handler: Handler, private val onError: (S
                 applyParametersSafe(c, p, effectiveFps, settings)
             }
             if (settings.focus == "auto") c.autoFocus { _, _ -> }
-            updateFaceTracking(c, settings.faceTracking, settings.autoFraming, settings.lockAeAwb)
+            val allowFace = if (effectiveFps >= 60 && !isSamsung) settings.autoFraming else settings.faceTracking
+            updateFaceTracking(c, allowFace, settings.autoFraming, settings.lockAeAwb)
             android.util.Log.i("S8Cam", "Samsung HAL1 updateControls: torch=${p.flashMode}, zoom=${p.zoom}, autoFraming=${settings.autoFraming}, aeLock=${p.autoExposureLock}, fps-range=${p.get("preview-fps-range")}")
         } catch (e: Exception) {
             android.util.Log.e("S8Cam", "Samsung HAL1 updateControls failed: ${e.message}", e)

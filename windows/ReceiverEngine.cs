@@ -149,7 +149,7 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     public int? PreviewProcessId => settings.Preview && SharedPreview ? 1 : previewDecoder?.Alive == true ? 1 : ffplay?.Id;
 
     private VirtualCameraOutput CreateVirtualCamera(CancellationToken ct) {
-        var output = new VirtualCameraOutput(settings, virtualSdpPath, ct, log);
+        var output = new VirtualCameraOutput(settings, null, ct, log);
         output.SetPreviewEnabled(settings.Preview && previewActive);
         output.PreviewFrame += (frame, w, h) => {
             if (settings.Preview && ReferenceEquals(virtualCamera, output)) PreviewFrame?.Invoke(frame, w, h);
@@ -754,9 +754,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         }
         previewBootstrapped = false;
         previewGeneration = Volatile.Read(ref sourceGeneration);
-        if (previewDecoder == null && File.Exists(previewSdpPath)) {
+        if (previewDecoder == null) {
             try {
-                previewDecoder = new PreviewDecoder(settings, previewSdpPath, log);
+                previewDecoder = new PreviewDecoder(settings, null, log);
                 previewDecoder.FrameReady += (buf, w, h) => PreviewFrame?.Invoke(buf, w, h);
             } catch (Exception ex) {
                 log("PreviewDecoder error: " + ex.Message);
@@ -924,15 +924,22 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                 await forward!.SendAsync(packet.AsMemory(0, length), recordTarget, ct);
             }
         }
-        if (settings.Preview && (previewDecoder != null || ffplay?.HasExited == false) && previewGeneration == Volatile.Read(ref sourceGeneration) &&
-            (previewBootstrapped || bootstrap)) {
-            previewBootstrapped = true;
-            await forward!.SendAsync(packet.AsMemory(0, length), previewIngestEndpoint!, ct);
+        if (settings.Preview && previewGeneration == Volatile.Read(ref sourceGeneration)) {
+            if (previewDecoder is { UsesDirectPipe: true } directPreview) {
+                directPreview.PushRtp(packet.AsSpan(0, length));
+            }
+            if (ffplay?.HasExited == false && (previewBootstrapped || bootstrap)) {
+                previewBootstrapped = true;
+                await forward!.SendAsync(packet.AsMemory(0, length), previewIngestEndpoint!, ct);
+            }
         }
-        if ((settings.VirtualCamera || settings.SpoutOutput) && virtualCamera != null && virtualGeneration == Volatile.Read(ref sourceGeneration) &&
-            (virtualBootstrapped || bootstrap)) {
-            virtualBootstrapped = true;
-            await forward!.SendAsync(packet.AsMemory(0, length), virtualIngestEndpoint!, ct);
+        if ((settings.VirtualCamera || settings.SpoutOutput) && virtualCamera != null && virtualGeneration == Volatile.Read(ref sourceGeneration)) {
+            if (virtualCamera.UsesDirectPipe) {
+                virtualCamera.PushRtp(packet.AsSpan(0, length));
+            } else if (virtualBootstrapped || bootstrap) {
+                virtualBootstrapped = true;
+                await forward!.SendAsync(packet.AsMemory(0, length), virtualIngestEndpoint!, ct);
+            }
         }
         if (settings.Obs && Volatile.Read(ref sourceGeneration) == Volatile.Read(ref relayGeneration) && (relayBootstrapped || bootstrap)) {
             relayBootstrapped = true;

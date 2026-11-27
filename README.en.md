@@ -1,16 +1,17 @@
 ![H3H Cam](docs/banner.svg)
 
-# Your Android phone as a Studio Camera & Microphone for Windows · 5.0.2 CineAtelier Studio
+# Your Android phone as a Studio Camera & Microphone for Windows · 5.0.3 CineAtelier Studio
 
 [Русский](README.md) · **English**
 
-**H3H Cam 5.0.2** turns an Android phone into a low-latency camera and 48 kHz microphone for streaming, OBS Studio, video calls and recording. All camera, color and audio controls live on Windows while the phone captures and hardware-encodes video.
+**H3H Cam 5.0.3** turns an Android phone into a low-latency camera and 48 kHz microphone for streaming, OBS Studio, video calls and recording. All camera, color and audio controls live on Windows while the phone captures and hardware-encodes video.
 
-[**Download full Portable 5.0.2**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.1/H3H-Cam-5.0.2-Portable.zip) · [Quick start](docs/QUICKSTART.en.md) · [Report a problem](https://github.com/H3H-holylord/H3H-Cam/issues)
+[**Download full Portable 5.0.3**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3-Portable.zip) · [Quick start](docs/QUICKSTART.en.md) · [Report a problem](https://github.com/H3H-holylord/H3H-Cam/issues)
 
-## New in 5.0.2 (CineAtelier Studio)
+## New in 5.0.3 (CineAtelier Studio)
 
-- **Universal Camera1 & Camera2 API Selector + 60 FPS Fix**: choose `Auto`, `Camera2 API` or `Original Camera1 API` on Android and Windows; universal 60 FPS pipeline (`SessionConfiguration.sessionParameters`, `KEY_OPERATING_RATE`, `VBR` encoding, EIS auto-off at 60 FPS while keeping optical OIS).
+- **Ultra Low-Latency Windows Decoder (`pipe:0` + `AUD` + `slice`)**: direct RTP → Annex-B depacketizer with Access Unit Delimiter (`AUD`), removing localhost UDP/SDP probing, frame-thread buffering and GPU→CPU readback — cuts average decode latency to **~20 ms** and increases 1080p60 throughput by 4×.
+- **Universal Camera1 & Camera2 API Selector + 60 FPS Fix**: choose `Auto`, `Camera2 API` or `Original Camera1 API` on Android and Windows; universal 60 FPS pipeline (clean `SessionConfiguration.sessionParameters`, `KEY_OPERATING_RATE`, `VBR` encoding, Qualcomm `video-hsr`, automatic EIS & idle Face Detection off at 60 FPS while keeping optical OIS).
 
 - **Dual Studio Personas + Mini Controller**: switch on the fly between **Cine Rig** (dark broadcast monitor) and **Nordic Atelier** (warm tactile light mode), or collapse into a compact always-on-top **Mini Controller**.
 - **Smart Privacy Slate**: replace live video instantly with a studio card, blurred freeze-frame, custom image or black frame without dropping the stream.
@@ -22,14 +23,14 @@
 ## Start here
 
 1. Extract the **entire** Portable ZIP to a folder and run `H3HCam Receiver.exe` (keep `tools` and `models` next to the EXE).
-2. Install `H3H-Cam-5.0.2.apk` on your phone and grant **Camera** and **Microphone** permissions (via `Install-on-phone.cmd` over USB or via the built-in Wi-Fi APK QR link).
+2. Install `H3H-Cam-5.0.3.apk` on your phone and grant **Camera** and **Microphone** permissions (via `Install-on-phone.cmd` over USB or via the built-in Wi-Fi APK QR link).
 3. **USB**: select **USB · via ADB → FIND → START**.
    **Wi-Fi (no cable)**: open `H3H Cam 5.0` on the phone on the same LAN, select **Wi-Fi · RTP → FIND → START** (or use **QR Wi-Fi**).
 4. Enable **Virtual camera** for OBS, Zoom or Discord, and toggle **🎙️ MIC** to route phone microphone audio.
 
 ## Downloads
 
-[Full Portable 5.0.2](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.1/H3H-Cam-5.0.2-Portable.zip) · [Android APK 5.0.2](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.2/H3H-Cam-5.0.2.apk) · [SHA256SUMS.txt](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.2/SHA256SUMS.txt)
+[Full Portable 5.0.3](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3-Portable.zip) · [Android APK 5.0.3](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3.apk) · [SHA256SUMS.txt](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/SHA256SUMS.txt)
 
 **GPL-3.0.** Third-party components retain their own licenses: [THIRD_PARTY.md](THIRD_PARTY.md).
 

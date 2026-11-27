@@ -275,7 +275,9 @@ class CameraStreamer(
         if (highSpeed) {
             return ranges.filter { it.lower == it.upper && it.upper >= fps && it.upper % fps == 0 }
                 .minByOrNull { it.upper }
-                ?: error("Camera2 не сообщает фиксированный high-speed режим для $fps fps")
+                ?: ranges.filter { it.upper == fps }.maxByOrNull { it.lower }
+                ?: ranges.filter { it.upper >= fps }.minByOrNull { it.upper - fps }
+                ?: error("Camera2 не сообщает high-speed режим для $fps fps")
         }
         val matching = ranges.filter { fps in it.lower..it.upper }
         if (matching.isNotEmpty()) {
@@ -345,10 +347,21 @@ class CameraStreamer(
                 executor,
                 callback
             )
-            // Передаём sessionParameters на этапе создания сессии — стандартное требование Camera2 (API 28+),
-            // чтобы любой HAL (Qualcomm CamX, MediaTek, Exynos, Tensor) выбрал 60 FPS режим сенсора сразу.
+            // Передаём чистые sessionParameters БЕЗ addTarget(surface) по спецификации Camera2 (API 28+),
+            // чтобы любой HAL (Qualcomm CamX, MediaTek, Exynos, Tensor) сразу выбрал 60 FPS режим сенсора.
             try {
-                config.sessionParameters = buildRepeatingRequest(device, c, fpsRange, false, settings).build()
+                val sessionReq = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                    set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+                    val videoStabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: intArrayOf()
+                    if (fpsRange.upper >= 60 && videoStabModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)) {
+                        set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+                    }
+                    val oisModes = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: intArrayOf()
+                    if (settings.stabilization && oisModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)) {
+                        set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
+                    }
+                }
+                config.sessionParameters = sessionReq.build()
             } catch (_: Exception) {}
             device.createCaptureSession(config)
         } else {
@@ -558,7 +571,10 @@ class CameraStreamer(
             if (c.get(CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE) == true)
                 request.set(CaptureRequest.CONTROL_AWB_LOCK, s.lockAeAwb)
             val maxFaces = c.get(CameraCharacteristics.STATISTICS_INFO_MAX_FACE_COUNT) ?: 0
-            if ((s.faceTracking || s.autoFraming) && maxFaces > 0) {
+            // На многих Android HAL (Qualcomm CamX и др.) аппаратный Face Detection переводит ISP в 30 FPS.
+            // При 60 FPS включаем детекцию лиц только если пользователь явно включил Auto-Framing.
+            val allowFaceDetect = if (fpsRange.upper >= 60) s.autoFraming else (s.faceTracking || s.autoFraming)
+            if (allowFaceDetect && maxFaces > 0) {
                 val faceModes = c.get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES) ?: intArrayOf()
                 if (faceModes.contains(CaptureRequest.STATISTICS_FACE_DETECT_MODE_SIMPLE)) {
                     request.set(CaptureRequest.STATISTICS_FACE_DETECT_MODE, CaptureRequest.STATISTICS_FACE_DETECT_MODE_SIMPLE)

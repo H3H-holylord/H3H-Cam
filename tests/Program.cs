@@ -896,6 +896,46 @@ internal static class Program {
         foreach (var p in hevcFu) restoredHevc.Write(p.AsSpan(15));
         Assert(restoredHevc.ToArray().SequenceEqual(hevcLargeIdr), "hevc FU exact byte reassembly");
 
+        // RtpAnnexBDepacketizer round-trip tests (H.264 + HEVC + AUD)
+        var hevcDep = new RtpAnnexBDepacketizer("hevc");
+        byte[]? depHevcAu = null;
+        foreach (var pkt in hevcPackets) depHevcAu = hevcDep.Push(pkt);
+        Assert(depHevcAu != null, "hevc depacketizer emits AU on marker");
+        var expectedHevcWithAud = new MemoryStream();
+        expectedHevcWithAud.Write(hevcAnnexB.ToArray());
+        expectedHevcWithAud.Write([0, 0, 0, 1, 0x46, 0x01, 0x50]);
+        Assert(depHevcAu!.SequenceEqual(expectedHevcWithAud.ToArray()), "hevc depacketizer exact Annex-B + AUD");
+
+        var h264Pack = new RtpH264Packetizer("h264");
+        var h264Dep = new RtpAnnexBDepacketizer("h264");
+        var h264PFrame = new byte[] { 0, 0, 0, 1, 0x41, 0x9A, 0x01, 0x02 };
+        var pOnlyPkt = new byte[12 + 4];
+        pOnlyPkt[0] = 0x80; pOnlyPkt[1] = 96 | 128; // marker=1
+        pOnlyPkt[12] = 0x41; pOnlyPkt[13] = 0x9A; pOnlyPkt[14] = 0x01; pOnlyPkt[15] = 0x02;
+        Assert(h264Dep.Push(pOnlyPkt) == null, "h264 depacketizer ignores P-frame before SPS+IDR");
+
+        var h264Sps = new byte[] { 0x67, 0x42, 0xC0, 0x2A };
+        var h264Pps = new byte[] { 0x68, 0xCE, 0x3C, 0x80 };
+        var h264LargeIdr = new byte[3200];
+        h264LargeIdr[0] = 0x65;
+        for (var i = 1; i < h264LargeIdr.Length; i++) h264LargeIdr[i] = (byte)(i % 247 + 1);
+        var h264AnnexB = new MemoryStream();
+        h264AnnexB.Write([0, 0, 0, 1]); h264AnnexB.Write(h264Sps);
+        h264AnnexB.Write([0, 0, 0, 1]); h264AnnexB.Write(h264Pps);
+        h264AnnexB.Write([0, 0, 0, 1]); h264AnnexB.Write(h264LargeIdr);
+        var h264Pkts = h264Pack.Packetize(h264AnnexB.ToArray(), 2_000_000);
+        byte[]? depH264Au = null;
+        foreach (var pkt in h264Pkts) depH264Au = h264Dep.Push(pkt);
+        Assert(depH264Au != null, "h264 depacketizer emits SPS+PPS+FU-A IDR");
+        var expectedH264WithAud = new MemoryStream();
+        expectedH264WithAud.Write(h264AnnexB.ToArray());
+        expectedH264WithAud.Write([0, 0, 0, 1, 0x09, 0xF0]);
+        Assert(depH264Au!.SequenceEqual(expectedH264WithAud.ToArray()), "h264 depacketizer exact Annex-B + AUD");
+        var h264Pkts2 = h264Pack.Packetize(h264PFrame, 2_016_667);
+        byte[]? depH264P = null;
+        foreach (var pkt in h264Pkts2) depH264P = h264Dep.Push(pkt);
+        Assert(depH264P != null && depH264P.AsSpan(depH264P.Length - 6).SequenceEqual(new byte[] { 0, 0, 0, 1, 0x09, 0xF0 }), "h264 depacketizer emits P-frame with AUD after keyframe");
+
         Assert(MainWindow.MaskIp("192.168.1.100") == "192.168.*.*", "mask ip");
         Assert(MainWindow.MaskSerial("R58M123456X") == "R5***6X", "mask serial");
 

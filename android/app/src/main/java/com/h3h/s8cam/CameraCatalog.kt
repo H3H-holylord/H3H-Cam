@@ -91,7 +91,8 @@ object CameraCatalog {
                 val ranges = p.supportedPreviewFpsRange.orEmpty().filter { it != null && it.size >= 2 }
                 val maxRangeFps = (ranges.maxOfOrNull { it[1] } ?: 30_000) / 1000
                 val hfrValues = (p.get("video-hfr-values") ?: "").split(',').map { it.trim() }
-                val hasHfr60 = "60" in hfrValues
+                val hsrValues = (p.get("video-hsr-values") ?: "").split(',').map { it.trim() }
+                val hasHfr60 = ("60" in hfrValues) || ("60" in hsrValues)
                 val flash = p.supportedFlashModes?.contains(Camera.Parameters.FLASH_MODE_TORCH) == true
                 val modes = sizes.mapNotNull { size ->
                     val fps = commonFps.filter { f ->

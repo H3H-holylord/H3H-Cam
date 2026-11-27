@@ -12,14 +12,21 @@ $DistDir = [IO.Path]::GetFullPath($DistDir)
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 $dependencyManifest = Get-Content -LiteralPath (Join-Path $s8Root 'packaging\portable-dependencies.json') -Raw | ConvertFrom-Json
 
+function Get-Sha256Hex([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $fs = [System.IO.File]::OpenRead($Path)
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($fs))).Replace('-', '') }
+    finally { $fs.Dispose(); $sha.Dispose() }
+}
+
 function Assert-Dependency([string]$Path, [string]$Hash) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Portable dependency missing: $Path" }
-    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $Hash) {
+    if ((Get-Sha256Hex $Path) -ne $Hash) {
         throw "Portable dependency hash mismatch: $Path. Use the versions in packaging/portable-dependencies.json."
     }
 }
 
-Write-Host "=== Создание автономного Portable-пакета H3H Cam 5.0.2 ===" -ForegroundColor Cyan
+Write-Host "=== Создание автономного Portable-пакета H3H Cam 5.0.3 ===" -ForegroundColor Cyan
 
 function Get-AndroidTool([string]$ToolName) {
     $sdk = $env:ANDROID_HOME
@@ -41,8 +48,8 @@ function Test-ApkIsRelease([string]$ApkPath) {
         $badgingStr = $badging -join "`n"
         if ($badgingStr -match "application-debuggable") { return $false }
         if (-not ($badgingStr -match "package:\s+name='com\.h3h\.s8cam'")) { return $false }
-        if (-not ($badgingStr -match "versionCode='52'")) { return $false }
-        if (-not ($badgingStr -match "versionName='5\.0\.2'")) { return $false }
+        if (-not ($badgingStr -match "versionCode='53'")) { return $false }
+        if (-not ($badgingStr -match "versionName='5\.0\.3'")) { return $false }
     }
     $apksigner = Get-AndroidTool 'apksigner.bat'
     if (-not $apksigner) { throw 'apksigner.bat is required to verify a release APK' }
@@ -74,11 +81,11 @@ function Assert-ReleaseApk([string]$ApkPath) {
         if (-not ($badgingStr -match "package:\s+name='com\.h3h\.s8cam'")) {
             throw "RELEASE GUARD FAILED: Package name must be com.h3h.s8cam"
         }
-        if (-not ($badgingStr -match "versionCode='52'")) {
-            throw "RELEASE GUARD FAILED: versionCode must be 52"
+        if (-not ($badgingStr -match "versionCode='53'")) {
+            throw "RELEASE GUARD FAILED: versionCode must be 53"
         }
-        if (-not ($badgingStr -match "versionName='5\.0\.2'")) {
-            throw "RELEASE GUARD FAILED: versionName must be 5.0.2"
+        if (-not ($badgingStr -match "versionName='5\.0\.3'")) {
+            throw "RELEASE GUARD FAILED: versionName must be 5.0.3"
         }
     }
 
@@ -105,15 +112,15 @@ function Assert-ReleaseApk([string]$ApkPath) {
 function Assert-ReleaseExe([string]$ExePath) {
     if (-not (Test-Path $ExePath)) { throw "Receiver EXE does not exist: $ExePath" }
     $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ExePath)
-    if ($info.FileVersion -ne '5.0.2.0') {
-        throw "RELEASE GUARD FAILED: Receiver FileVersion must be 5.0.2.0 (got: $($info.FileVersion))"
+    if ($info.FileVersion -ne '5.0.3.0') {
+        throw "RELEASE GUARD FAILED: Receiver FileVersion must be 5.0.3.0 (got: $($info.FileVersion))"
     }
     Write-Host "✅ Receiver Release Guard: $ExePath подтверждён (Version: $($info.FileVersion))." -ForegroundColor Green
 }
 
 # 1. Проверяем наличие и валидность бинарников Windows и Android
 $exePath = Join-Path $DistDir 'H3HCam Receiver.exe'
-$apkPath = Join-Path $DistDir 'H3H-Cam-5.0.2.apk'
+$apkPath = Join-Path $DistDir 'H3H-Cam-5.0.3.apk'
 
 if (-not (Test-Path $exePath)) {
     Write-Host "Сборка H3HCam Receiver.exe..." -ForegroundColor Yellow
@@ -125,7 +132,7 @@ Assert-ReleaseExe $exePath
 if (-not (Test-Path $apkPath) -or -not (Test-ApkIsRelease $apkPath)) {
     Write-Host "Сборка проверенного Android Release APK..." -ForegroundColor Yellow
     & (Join-Path $s8Root 'Build.ps1') -Target Android
-    if ($DistDir -ne (Join-Path $s8Root 'dist')) { Copy-Item -LiteralPath (Join-Path $s8Root 'dist\H3H-Cam-5.0.2.apk') -Destination $apkPath -Force }
+    if ($DistDir -ne (Join-Path $s8Root 'dist')) { Copy-Item -LiteralPath (Join-Path $s8Root 'dist\H3H-Cam-5.0.3.apk') -Destination $apkPath -Force }
 }
 Assert-ReleaseApk $apkPath
 
@@ -162,7 +169,7 @@ if (-not $ModelPath) { $ModelPath = Join-Path $s8Root 'windows\models\u2netp.onn
 Assert-Dependency $ModelPath $dependencyManifest.model.sha256
 
 # 3. Формируем папку пакета
-$portableDir = Join-Path $DistDir 'H3H-Cam-5.0.2-Portable'
+$portableDir = Join-Path $DistDir 'H3H-Cam-5.0.3-Portable'
 $portableDir = [IO.Path]::GetFullPath($portableDir)
 if ([IO.Path]::GetDirectoryName($portableDir) -ne $DistDir.TrimEnd('\')) {
     throw "Portable target must be a direct child of DistDir: $portableDir"
@@ -177,9 +184,9 @@ $toolsDir = Join-Path $portableDir 'tools'
 New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
 
 # Копируем основные файлы
-Write-Host "Копирование H3HCam Receiver.exe и H3H-Cam-5.0.2.apk..." -ForegroundColor Gray
+Write-Host "Копирование H3HCam Receiver.exe и H3H-Cam-5.0.3.apk..." -ForegroundColor Gray
 Copy-Item -LiteralPath $exePath -Destination (Join-Path $portableDir 'H3HCam Receiver.exe') -Force
-Copy-Item -LiteralPath $apkPath -Destination (Join-Path $portableDir 'H3H-Cam-5.0.2.apk') -Force
+Copy-Item -LiteralPath $apkPath -Destination (Join-Path $portableDir 'H3H-Cam-5.0.3.apk') -Force
 if (Test-Path (Join-Path $s8Root 'windows\app.ico')) {
     Copy-Item -LiteralPath (Join-Path $s8Root 'windows\app.ico') -Destination (Join-Path $portableDir 'app.ico') -Force
 }
@@ -237,13 +244,13 @@ Write-Host "Папка Portable успешно сформирована: $portab
 
 $hashLines = Get-ChildItem -LiteralPath $portableDir -File -Recurse | Sort-Object FullName | ForEach-Object {
     $relative = $_.FullName.Substring($portableDir.Length + 1).Replace('\', '/')
-    '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $relative
+    '{0}  {1}' -f (Get-Sha256Hex $_.FullName).ToLowerInvariant(), $relative
 }
 [IO.File]::WriteAllLines((Join-Path $portableDir 'SHA256SUMS.txt'), [string[]]$hashLines, [Text.UTF8Encoding]::new($false))
 
 # 4. Создаем ZIP-архив со стандартными разделителями '/'
 if (-not $NoZip) {
-    $zipPath = Join-Path $DistDir 'H3H-Cam-5.0.2-Portable.zip'
+    $zipPath = Join-Path $DistDir 'H3H-Cam-5.0.3-Portable.zip'
     if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
     Write-Host "Сжатие в ZIP-архив: $zipPath ..." -ForegroundColor Yellow
 
@@ -269,7 +276,7 @@ if (-not $NoZip) {
     $zipMb = [math]::Round($zipItem.Length / 1MB, 1)
     Write-Host "Архив готов: $zipPath ($($zipMb) MB)" -ForegroundColor Green
 
-    $sha = (Get-FileHash $zipPath -Algorithm SHA256).Hash
+    $sha = Get-Sha256Hex $zipPath
     Write-Host "SHA256: $sha" -ForegroundColor Cyan
 }
 

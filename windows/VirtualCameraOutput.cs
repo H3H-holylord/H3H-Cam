@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Threading.Channels;
 
 namespace S8Cam;
 
@@ -11,7 +12,11 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
     private readonly Process? decoder;
     private readonly CancellationTokenSource stop;
     private readonly Task? pump;
+    private readonly Task? stdinPump;
     private readonly Task? slatePump;
+    private readonly RtpAnnexBDepacketizer? depacketizer;
+    private readonly Channel<byte[]>? stdinChannel;
+    private readonly object depacketizerLock = new();
     private Settings settings;
     private readonly object slateLock = new();
     private byte[]? lastRawFrame;
@@ -60,7 +65,20 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
     }
 
 
-    public VirtualCameraOutput(Settings settings, string sdp, CancellationToken cancellation, Action<string> log) {
+    public bool UsesDirectPipe => stdinChannel != null;
+
+    public void PushRtp(ReadOnlySpan<byte> rtpPacket) {
+        if (depacketizer == null || stdinChannel == null || stop.IsCancellationRequested) return;
+        byte[]? au;
+        lock (depacketizerLock) {
+            au = depacketizer.Push(rtpPacket);
+        }
+        if (au != null) {
+            stdinChannel.Writer.TryWrite(au);
+        }
+    }
+
+    public VirtualCameraOutput(Settings settings, string? sdp, CancellationToken cancellation, Action<string> log) {
         this.settings = settings.Clone();
         var outDim = settings.OutputDimensions;
         var finalDim = settings.FinalOutputDimensions;
@@ -105,7 +123,7 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
             1,
             PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous,
-            256 * 1024,
+            4 * 1024 * 1024,
             64 * 1024
         );
 
@@ -114,21 +132,47 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
             // if constructed while PrivacyMute is already on, construct decoder without black drawbox so resume is instant!
             var decodeSettings = settings.Clone();
             decodeSettings.PrivacyMute = false;
-            decoder = Processes.Start(settings.FfmpegPath, [
-                "-hide_banner", "-loglevel", "warning", "-nostdin",
-                // nobuffer discards the IDR consumed during SDP probing, breaking HEVC references.
-                "-flags", "low_delay",
-                "-analyzeduration", "100000", "-probesize", "100000",
-                "-hwaccel", "auto",
-                "-protocol_whitelist", "file,udp,rtp",
-                "-buffer_size", "16777216", "-max_delay", "30000", "-reorder_queue_size", "256",
-                "-i", sdp,
-                "-map", "0:v:0", "-an",
-                "-vf", decodeSettings.BuildVideoFilter(outDim.Width, outDim.Height,nv12Limited601:!isBgra),
-                "-pix_fmt", pixFmt,
-                "-fps_mode", "passthrough",
-                "-f", "rawvideo", "-y", pipePath
-            ], line => log("Direct/Virtual Cam · " + line), stdout: false, videoPriority: true);
+            var vf = decodeSettings.BuildVideoFilter(outDim.Width, outDim.Height, nv12Limited601: !isBgra);
+            var directPipe = string.IsNullOrWhiteSpace(sdp);
+            if (directPipe) {
+                var codecFmt = settings.Codec == "hevc" ? "hevc" : "h264";
+                var probe = settings.Codec == "hevc" ? "8192" : "4096";
+                depacketizer = new RtpAnnexBDepacketizer(codecFmt);
+                stdinChannel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(4) {
+                    SingleReader = true,
+                    FullMode = BoundedChannelFullMode.DropOldest
+                });
+                decoder = Processes.Start(settings.FfmpegPath, [
+                    "-hide_banner", "-loglevel", "warning",
+                    "-flags", "low_delay",
+                    "-thread_type", "slice", "-threads", "4",
+                    "-analyzeduration", "0", "-probesize", probe,
+                    "-f", codecFmt, "-i", "pipe:0",
+                    "-map", "0:v:0", "-an",
+                    "-vf", vf,
+                    "-pix_fmt", pixFmt,
+                    "-fps_mode", "passthrough",
+                    "-flush_packets", "1",
+                    "-f", "rawvideo", "-y", pipePath
+                ], line => log("Direct/Virtual Cam · " + line), stdin: true, stdout: false, videoPriority: true);
+                stdinPump = PumpStdin(decoder, stdinChannel, stop.Token);
+            } else {
+                decoder = Processes.Start(settings.FfmpegPath, [
+                    "-hide_banner", "-loglevel", "warning", "-nostdin",
+                    "-flags", "low_delay",
+                    "-thread_type", "slice", "-threads", "4",
+                    "-analyzeduration", "50000", "-probesize", "65536",
+                    "-protocol_whitelist", "file,udp,rtp",
+                    "-buffer_size", "16777216", "-max_delay", "0", "-reorder_queue_size", "0",
+                    "-i", sdp!,
+                    "-map", "0:v:0", "-an",
+                    "-vf", vf,
+                    "-pix_fmt", pixFmt,
+                    "-fps_mode", "passthrough",
+                    "-flush_packets", "1",
+                    "-f", "rawvideo", "-y", pipePath
+                ], line => log("Direct/Virtual Cam · " + line), stdout: false, videoPriority: true);
+            }
             var previewDim=PreviewDecoder.PreviewDimensions(settings);
             previewWorker=new LatestFramePreview(outDim.Width,outDim.Height,previewDim.Width,previewDim.Height,
                 (frame,w,h)=>{if(previewEnabled&&!Volatile.Read(ref this.settings).PrivacyMute)PreviewFrame?.Invoke(frame,w,h);},log);
@@ -363,11 +407,30 @@ public sealed class VirtualCameraOutput : IAsyncDisposable {
         catch { }
     }
 
+    private static async Task PumpStdin(Process proc, Channel<byte[]> channel, CancellationToken ct) {
+        try {
+            var stream = proc.StandardInput.BaseStream;
+            await foreach (var au in channel.Reader.ReadAllAsync(ct)) {
+                if (proc.HasExited) break;
+                await stream.WriteAsync(au, ct);
+                await stream.FlushAsync(ct);
+            }
+        } catch (OperationCanceledException) {
+        } catch (IOException) {
+        } catch (ObjectDisposedException) {
+        } catch (InvalidOperationException) { }
+    }
+
     public async ValueTask DisposeAsync() {
+        stdinChannel?.Writer.TryComplete();
         stop.Cancel();
-        if (decoder != null) Processes.Kill(decoder);
+        if (decoder != null) {
+            try { decoder.StandardInput.Close(); } catch { }
+            Processes.Kill(decoder);
+        }
         pipeServer?.Dispose();
         try {
+            if (stdinPump != null) await stdinPump;
             if (pump != null) await pump;
             if (slatePump != null) await slatePump;
         }
