@@ -302,7 +302,10 @@ class H264Encoder(
         fun maxFpsToEncoder(outputFps: Int, inputFps: Int): Float? =
             if (inputFps > outputFps) outputFps.toFloat() + 1.5f else null
 
-        fun preferVbr(outputFps: Int): Boolean = outputFps >= 60
+        // Предпочитаем VBR на всех FPS (включая 30 FPS): на Huawei Kirin (c2.hisi.avc/hevc.encoder)
+        // BITRATE_MODE_CBR на 30 FPS часто молча зависает с 0 кадрами, а на Qualcomm 60 FPS даёт рябь.
+        // Плавность сетевого трафика контролирует pacing в RtpH264Sender.
+        fun preferVbr(outputFps: Int): Boolean = true
 
         internal fun selectTunings(minimalOnly: Boolean): List<Tuning> =
             if (minimalOnly) listOf(Tuning.MINIMAL) else Tuning.entries

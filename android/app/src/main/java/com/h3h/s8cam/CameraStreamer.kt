@@ -192,7 +192,8 @@ class CameraStreamer(
                     selectedCharacteristics!!,
                     Size(mode.captureWidth, mode.captureHeight),
                     actualFps,
-                    highSpeed
+                    highSpeed,
+                    preferVariable = minimalCodec
                 )
 
                 StreamStats.actualFps = actualFps
@@ -269,28 +270,16 @@ class CameraStreamer(
         c: CameraCharacteristics,
         size: Size,
         fps: Int,
-        highSpeed: Boolean
+        highSpeed: Boolean,
+        preferVariable: Boolean = false
     ): Range<Int> {
         val ranges = if (highSpeed) {
             val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 ?: error("Camera2 не сообщает high-speed режимы")
             map.getHighSpeedVideoFpsRangesFor(size).toList()
         } else c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty()
-        if (highSpeed) {
-            return ranges.filter { it.lower == it.upper && it.upper >= fps && it.upper % fps == 0 }
-                .minByOrNull { it.upper }
-                ?: ranges.filter { it.upper == fps }.maxByOrNull { it.lower }
-                ?: ranges.filter { it.upper >= fps }.minByOrNull { it.upper - fps }
-                ?: error("Camera2 не сообщает high-speed режим для $fps fps")
-        }
-        val matching = ranges.filter { fps in it.lower..it.upper }
-        if (matching.isNotEmpty()) {
-            return matching.minWithOrNull(compareBy<Range<Int>> { it.upper - it.lower }
-                .thenByDescending { it.lower })!!
-        }
-        return ranges.filter { it.upper >= fps }.minByOrNull { it.upper - fps }
-            ?: ranges.maxByOrNull { it.upper }
-            ?: Range(fps, fps)
+        val chosen = chooseFpsRange(ranges.map { it.lower to it.upper }, fps, highSpeed, preferVariable)
+        return Range(chosen.first, chosen.second)
     }
 
     private fun createSession(
@@ -357,7 +346,7 @@ class CameraStreamer(
                 val sessionReq = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
                     val videoStabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: intArrayOf()
-                    if (fpsRange.upper >= 60 && videoStabModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)) {
+                    if ((fpsRange.upper >= 60 || minimalCodec) && videoStabModes.contains(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)) {
                         set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
                     }
                     val oisModes = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: intArrayOf()
@@ -570,7 +559,7 @@ class CameraStreamer(
         if (!highSpeed) {
             val oisModes = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: intArrayOf()
             val videoStabModes = c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: intArrayOf()
-            val allowEis = s.stabilization && fpsRange.upper < 60
+            val allowEis = !minimalCodec && s.stabilization && fpsRange.upper < 60
             if (s.stabilization && oisModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)) {
                 request.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
             } else if (!s.stabilization && oisModes.contains(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)) {
@@ -739,5 +728,39 @@ class CameraStreamer(
     companion object {
         const val ENCODER_STALLED_FALLBACK = "ENCODER_STALLED_FALLBACK: Кодек не выдаёт кадры — переключение на безопасный профиль"
         const val ENCODER_STALL_TIMEOUT_MS = 3500L
+
+        internal fun chooseFpsRange(
+            ranges: List<Pair<Int, Int>>,
+            fps: Int,
+            highSpeed: Boolean,
+            preferVariable: Boolean = false
+        ): Pair<Int, Int> {
+            if (highSpeed) {
+                return ranges.filter { it.first == it.second && it.second >= fps && it.second % fps == 0 }
+                    .minByOrNull { it.second }
+                    ?: ranges.filter { it.second == fps }.maxByOrNull { it.first }
+                    ?: ranges.filter { it.second >= fps }.minByOrNull { it.second - fps }
+                    ?: error("Camera2 не сообщает high-speed режим для $fps fps")
+            }
+            val exactUpper = ranges.filter { it.second == fps }
+            if (exactUpper.isNotEmpty()) {
+                if (preferVariable) {
+                    val variable = exactUpper.filter { it.first < it.second }
+                    if (variable.isNotEmpty()) {
+                        return variable.maxByOrNull { it.first }!!
+                    }
+                }
+                return exactUpper.minWithOrNull(compareBy<Pair<Int, Int>> { it.second - it.first }
+                    .thenByDescending { it.first })!!
+            }
+            val matching = ranges.filter { fps in it.first..it.second }
+            if (matching.isNotEmpty()) {
+                return matching.minWithOrNull(compareBy<Pair<Int, Int>> { it.second - it.first }
+                    .thenByDescending { it.first })!!
+            }
+            return ranges.filter { it.second >= fps }.minByOrNull { it.second - fps }
+                ?: ranges.maxByOrNull { it.second }
+                ?: (fps to fps)
+        }
     }
 }

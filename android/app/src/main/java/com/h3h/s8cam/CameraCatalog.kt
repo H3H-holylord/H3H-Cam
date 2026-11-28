@@ -89,19 +89,19 @@ object CameraCatalog {
                     .filter { it.width >= 640 && it.height >= 360 && it.width <= 4096 && it.height <= 2160 }
                     .distinctBy { "${it.width}x${it.height}" }
                 val ranges = p.supportedPreviewFpsRange.orEmpty().filter { it != null && it.size >= 2 }
-                val maxRangeFps = (ranges.maxOfOrNull { it[1] } ?: 30_000) / 1000
+                val rangePairs = ranges.map { (it[0] / 1000) to (it[1] / 1000) }
+                val maxRangeFps = rangePairs.maxOfOrNull { it.second } ?: 30
                 val hfrValues = (p.get("video-hfr-values") ?: "").split(',').map { it.trim() }
                 val hsrValues = (p.get("video-hsr-values") ?: "").split(',').map { it.trim() }
                 val hasHfr60 = ("60" in hfrValues) || ("60" in hsrValues)
                 val flash = p.supportedFlashModes?.contains(Camera.Parameters.FLASH_MODE_TORCH) == true
                 val modes = sizes.mapNotNull { size ->
-                    val fps = commonFps.filter { f ->
-                        val withinRange = ranges.any { f * 1000 in it[0]..it[1] } || f <= maxRangeFps
-                        val hfrOk = f == 60 && (hasHfr60 || (isSamsung && size.width == 1920 && size.height == 1080))
-                        (withinRange || hfrOk) && H264Encoder.supports(size.width, size.height, f)
+                    val fps = filterSupportedFps(rangePairs, maxOf(maxRangeFps, 60)) { f ->
+                        H264Encoder.supports(size.width, size.height, f)
                     }.toMutableList()
+                    val hfr60Ok = hasHfr60 || (isSamsung && size.width == 1920 && size.height == 1080)
                     if (fps.isEmpty() && H264Encoder.supports(size.width, size.height, 30)) fps += 30
-                    if (60 !in fps && (maxRangeFps >= 60 || hasHfr60) && H264Encoder.supports(size.width, size.height, 60)) {
+                    if (60 !in fps && (maxRangeFps >= 60 || hfr60Ok) && H264Encoder.supports(size.width, size.height, 60)) {
                         fps += 60
                     }
                     if (fps.isEmpty()) null else VideoMode(size.width, size.height, fps.distinct().sorted())
@@ -226,16 +226,10 @@ object CameraCatalog {
         val durationLimit = if (duration > 0) (1_000_000_000L / duration).toInt()
             else if (textureOnly) minOf(maxSensorFps, 30) else maxSensorFps
 
-        val regular = commonFps.filter { fps ->
-            fps <= durationLimit + 1 && ranges.any { (fps in it.lower..it.upper) || (it.upper >= fps) } &&
-                H264Encoder.supports(encodedSize.width, encodedSize.height, fps)
+        val rangePairs = ranges.map { it.lower to it.upper }
+        val regular = filterSupportedFps(rangePairs, durationLimit) { fps ->
+            H264Encoder.supports(encodedSize.width, encodedSize.height, fps)
         }.toMutableList()
-        if (regular.isEmpty()) {
-            ranges.map { it.upper }.filter { it in 10..60 && it <= durationLimit + 1 }
-                .distinct().sorted()
-                .filter { H264Encoder.supports(encodedSize.width, encodedSize.height, it) }
-                .forEach { regular += it }
-        }
         if (!textureOnly && regular.isEmpty() && H264Encoder.supports(size.width, size.height, 30)) {
             regular += 30
         }
@@ -262,6 +256,31 @@ object CameraCatalog {
             regular += 60
         }
         return regular.distinct().sorted() to highSpeed
+    }
+
+    internal fun filterSupportedFps(
+        ranges: List<Pair<Int, Int>>,
+        durationLimit: Int,
+        supportsEncoder: (Int) -> Boolean
+    ): List<Int> {
+        // В Android Camera2/Camera1 поддерживаемый целевой FPS задаётся верхней границей
+        // диапазона AE (например [15..30] или [30..30] для 30 FPS). Проверка `fps in lower..upper`
+        // ошибочно добавляла неподдерживаемые 24/25/50 FPS внутрь диапазонов [15..30] / [30..60].
+        val supportedUpper = ranges.map { it.second }.toSet()
+        val regular = commonFps.filter { fps ->
+            fps <= durationLimit + 1 &&
+                fps in supportedUpper &&
+                supportsEncoder(fps)
+        }.toMutableList()
+        if (regular.isEmpty()) {
+            ranges.map { it.second }
+                .filter { it in 10..60 && it <= durationLimit + 1 }
+                .distinct()
+                .sorted()
+                .filter { supportsEncoder(it) }
+                .forEach { regular += it }
+        }
+        return regular.distinct().sorted()
     }
 
     fun resolve(routes: List<CameraRoute>, key: String): CameraRoute {
