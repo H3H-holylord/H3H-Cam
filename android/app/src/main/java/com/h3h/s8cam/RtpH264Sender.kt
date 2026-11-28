@@ -20,8 +20,9 @@ class RtpH264Sender(
     private val onCommand: ((JSONObject) -> Unit)? = null,
     private val session: String = "",
     private val appContext: android.content.Context? = null,
-    private val discoveryPort: Int = 5005
-) : QueuedSender(requestKeyframe, codec = codec) {
+    private val discoveryPort: Int = 5005,
+    private val monotonicMs: () -> Long = { android.os.SystemClock.elapsedRealtime() }
+) : QueuedSender(requestKeyframe, codec = codec, monotonicMs = monotonicMs) {
     constructor(
         ip: String,
         port: Int,
@@ -39,14 +40,22 @@ class RtpH264Sender(
     private val pacedBitrate get() = (currentBitrate.toLong() * 5 / 4).coerceAtLeast(2_000_000L)
     private var nextPacketNs = 0L
     private var paceCurrentFrame = true
-    @Volatile private var socket: DatagramSocket? = null
+    private val sendLock = Any()
     private val history = object : LinkedHashMap<Int, ByteArray>(768, 0.75f, false) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, ByteArray>?) = size > 768
     }
+    // Симметричный UDP-сокет: привязан к port + 1 (5001). ПК отправляет START_STREAM/HEARTBEAT/PUNCH
+    // со своего видеопорта 5000 на наш порт 5001, и мы отправляем видео RTP обратно с 5001 на 5000.
+    // Это создаёт обратный 4-кортеж, который Stateful Firewall Windows пропускает автоматически даже в Public Wi-Fi.
+    // Важно: вычисляем controlPort вне apply {}, т.к. внутри DatagramSocket.apply имя `port` затеняется
+    // методом DatagramSocket.getPort() (-1), из-за чего `port + 1` превращалось в 0 (случайный порт)!
+    private val controlPort = port + 1
     private val control = DatagramSocket(null).apply {
         reuseAddress = true
-        bind(InetSocketAddress(port + 1))
+        bind(InetSocketAddress(controlPort))
         receiveBufferSize = 64 * 1024
+        sendBufferSize = 2 * 1024 * 1024
+        trafficClass = 0x10
         soTimeout = 1000
         WifiNetBinder.bind(appContext, this)
     }
@@ -67,13 +76,9 @@ class RtpH264Sender(
     }
 
     private fun sendRaw(bytes: ByteArray) {
-        val s = socket ?: DatagramSocket().apply {
-            sendBufferSize = 2 * 1024 * 1024
-            trafficClass = 0x10
-            WifiNetBinder.bind(appContext, this)
-            socket = this
+        synchronized(sendLock) {
+            control.send(DatagramPacket(bytes, bytes.size, address, port))
         }
-        s.send(DatagramPacket(bytes, bytes.size, address, port))
         StreamStats.sentBytes.addAndGet(bytes.size.toLong())
     }
 
@@ -82,15 +87,18 @@ class RtpH264Sender(
         var helloAt = 0L
         var revision = ""
         while (running) try {
-            if (session.isNotEmpty() && android.os.SystemClock.elapsedRealtime() - helloAt >= 1000) {
-                helloAt = android.os.SystemClock.elapsedRealtime()
+            if (session.isNotEmpty() && monotonicMs() - helloAt >= 1000) {
+                helloAt = monotonicMs()
                 val hello = ("H3HCAM_CONTROL_POLL " + JSONObject().put("token", session).put("revision", revision)
                     .put("telemetry", JSONObject(StreamStats.snapshot))).toByteArray(Charsets.UTF_8)
-                control.send(DatagramPacket(hello, hello.size, address, discoveryPort))
+                synchronized(sendLock) {
+                    control.send(DatagramPacket(hello, hello.size, address, discoveryPort))
+                }
             }
             val packet = DatagramPacket(buffer, buffer.size)
             control.receive(packet)
             if (packet.address != address) continue
+            if (packet.length < 2 || buffer[packet.offset] != '{'.code.toByte()) continue
             val json = JSONObject(String(packet.data, packet.offset, packet.length, Charsets.UTF_8))
             if (session.isNotEmpty() && json.optString("session") != session) continue
             if (json.has("revision")) revision = json.getString("revision")
@@ -131,7 +139,7 @@ class RtpH264Sender(
     }
 
     override fun disconnect() {
-        socket?.close(); socket = null; nextPacketNs = 0L; packetizer.resetAfterLoss()
+        nextPacketNs = 0L; packetizer.resetAfterLoss()
         synchronized(history) { history.clear() }
     }
 

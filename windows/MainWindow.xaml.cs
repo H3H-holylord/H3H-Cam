@@ -2637,8 +2637,10 @@ public partial class MainWindow : Window {
                 adapters.Add(new LocalLanAdapter(pcIp, "255.255.255.255", pcIp, false));
             }
 
-            var apkPath = Path.Combine(AppContext.BaseDirectory, "H3H-Cam-5.0.0.apk");
-            if (!File.Exists(apkPath)) apkPath = Path.Combine(AppContext.BaseDirectory, "H3H-Cam-5.0.apk");
+            var apkPath = Directory.EnumerateFiles(AppContext.BaseDirectory, "H3H-Cam-*.apk")
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .ThenByDescending(p => p, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault() ?? Path.Combine(AppContext.BaseDirectory, "H3H-Cam-5.0.4.apk");
             var apkFileName = Path.GetFileName(apkPath);
             int apkPort = 0;
             if (File.Exists(apkPath)) {

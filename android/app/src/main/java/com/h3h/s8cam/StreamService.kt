@@ -24,6 +24,7 @@ class StreamService : Service() {
     @Volatile private var alive = true
     private var generation = 0
     private var retryCount = 0
+    private var useMinimalCodec = false
     private var settings = StreamSettings()
     private var accessory: UsbAccessory? = null
     private var lastPcHeartbeat = SystemClock.elapsedRealtime()
@@ -98,9 +99,7 @@ class StreamService : Service() {
                 if ((lensChanged || apiChanged || (fpsChanged && camera?.isLegacy() != true)) && sender != null) {
                     val activeSender = sender!!
                     camera?.stop()
-                    camera = CameraStreamer(this, next, { message -> worker.post { recover(generation, message) } }) { data, _, _, pts ->
-                        offerVideo(activeSender, data, pts)
-                    }.also { it.start() }
+                    startCamera(next, activeSender, generation)
                     StreamStats.controls = if (lensChanged) "Объектив переключен на лету: ${next.cameraKey}. " else "FPS переключен на лету: ${effectiveNewFps} fps. "
                 } else {
                     camera?.setBitrate(next.bitrate)
@@ -147,15 +146,13 @@ class StreamService : Service() {
                 syncAudioPipeline(next)
                 val activeSender = sender!!
                 camera?.stop()
-                camera = CameraStreamer(this, next, { message -> worker.post { recover(generation, message) } }) { data, _, _, pts ->
-                    offerVideo(activeSender, data, pts)
-                }.also { it.start() }
+                startCamera(next, activeSender, generation)
                 StreamStats.controls = "Объектив переключен на лету: ${next.cameraKey}. "
                 return@post
             }
 
             generation++; stopPipeline()
-            settings = next; retryCount = 0
+            settings = next; retryCount = 0; useMinimalCodec = false
             accessory = if (Build.VERSION.SDK_INT >= 33) intent?.getParcelableExtra(UsbManager.EXTRA_ACCESSORY, UsbAccessory::class.java)
                 else @Suppress("DEPRECATION") intent?.getParcelableExtra(UsbManager.EXTRA_ACCESSORY)
             StreamStats.reset()
@@ -217,6 +214,17 @@ class StreamService : Service() {
         target.offer(data, pts)
     }
 
+    private fun startCamera(cfg: StreamSettings, targetSender: QueuedSender, gen: Int) {
+        camera = CameraStreamer(
+            context = this,
+            settings = cfg,
+            onError = { message -> worker.post { recover(gen, message) } },
+            minimalCodec = useMinimalCodec
+        ) { data, _, _, pts ->
+            offerVideo(targetSender, data, pts)
+        }.also { it.start() }
+    }
+
     private fun startPipeline(g: Int) {
         if (!alive || generation != g) return
         try {
@@ -236,9 +244,7 @@ class StreamService : Service() {
             }
             sender = s; s.start()
             syncAudioPipeline(settings)
-            camera = CameraStreamer(this, settings, { message -> worker.post { recover(g, message) } }) { data, _, _, pts ->
-                offerVideo(s, data, pts)
-            }.also { it.start() }
+            startCamera(settings, s, g)
         } catch (e: Exception) { recover(g, e.message ?: "Ошибка запуска") }
     }
 
@@ -302,9 +308,7 @@ class StreamService : Service() {
                 if ((lensChanged || apiChanged || (fpsChanged && camera?.isLegacy() != true)) && camera != null && sender != null) {
                     val activeSender = sender!!
                     camera?.stop()
-                    camera = CameraStreamer(this, next, { message -> worker.post { recover(generation, message) } }) { data, _, _, pts ->
-                        offerVideo(activeSender, data, pts)
-                    }.also { it.start() }
+                    startCamera(next, activeSender, generation)
                     StreamStats.controls = if (lensChanged) "Объектив переключен на лету: $newKey. " else "FPS переключен на лету: ${effectiveNewFps} fps. "
                 } else {
                     camera?.setBitrate(next.bitrate)
@@ -366,6 +370,7 @@ class StreamService : Service() {
             val codecChanged = current.codec != next.codec
 
             settings = next
+            if (codecChanged) useMinimalCodec = false
             if (codecChanged && settings.transport == "wifi") {
                 generation++
                 stopPipeline()
@@ -377,9 +382,7 @@ class StreamService : Service() {
 
             if (camera == null || resChanged || codecChanged || lensChanged || apiChanged || (fpsChanged && camera?.isLegacy() != true)) {
                 camera?.stop()
-                camera = CameraStreamer(this, next, { message -> worker.post { recover(g, message) } }) { data, _, _, pts ->
-                    offerVideo(activeSender, data, pts)
-                }.also { it.start() }
+                startCamera(next, activeSender, g)
                 StreamStats.state = "USB Direct · камера переконфигурирована"
             } else {
                 camera?.setBitrate(next.bitrate)
@@ -393,12 +396,15 @@ class StreamService : Service() {
         if (!alive || g != generation) return
         generation++
         val next = generation
+        val isStallFallback = message.startsWith("ENCODER_STALLED_FALLBACK")
+        if (isStallFallback) useMinimalCodec = true
         stopAudioPipeline()
         camera?.stop(); camera = null; sender?.close(); sender = null
-        StreamStats.codec = "retry"; StreamStats.state = message
+        StreamStats.codec = if (isStallFallback) "fallback-minimal" else "retry"
+        StreamStats.state = message
         Log.e("S8Cam", message)
-        val delay = minOf(10_000L, 1000L shl retryCount.coerceAtMost(3))
-        retryCount++
+        val delay = if (isStallFallback) 500L else minOf(10_000L, 1000L shl retryCount.coerceAtMost(3))
+        if (!isStallFallback) retryCount++
         worker.postDelayed({ startPipeline(next) }, delay)
     }
 

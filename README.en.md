@@ -1,15 +1,18 @@
 ![H3H Cam](docs/banner.svg)
 
-# Your Android phone as a Studio Camera & Microphone for Windows · 5.0.3 CineAtelier Studio
+# Your Android phone as a Studio Camera & Microphone for Windows · 5.0.4 CineAtelier Studio
 
 [Русский](README.md) · **English**
 
-**H3H Cam 5.0.3** turns an Android phone into a low-latency camera and 48 kHz microphone for streaming, OBS Studio, video calls and recording. All camera, color and audio controls live on Windows while the phone captures and hardware-encodes video.
+**H3H Cam 5.0.4** turns an Android phone into a low-latency camera and 48 kHz microphone for streaming, OBS Studio, video calls and recording. All camera, color and audio controls live on Windows while the phone captures and hardware-encodes video.
 
-[**Download full Portable 5.0.3**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3-Portable.zip) · [Quick start](docs/QUICKSTART.en.md) · [Report a problem](https://github.com/H3H-holylord/H3H-Cam/issues)
+[**Download full Portable 5.0.4**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.4/H3H-Cam-5.0.4-Portable.zip) · [Quick start](docs/QUICKSTART.en.md) · [Report a problem](https://github.com/H3H-holylord/H3H-Cam/issues)
 
-## New in 5.0.3 (CineAtelier Studio)
+## New in 5.0.4 (CineAtelier Studio)
 
+- **Symmetric UDP (Automatic Windows Firewall Traversal on Public Wi-Fi)**: Android sends RTP video from the same socket (`5001`) that Windows punches from UDP `5000` (`START_STREAM`/`HEARTBEAT`/`H3HCAM_PUNCH`), fixing "black screen with live face tracking" on Public Wi-Fi networks without manual firewall rules.
+- **Automatic Silent-Encoder Fallback (Huawei Kirin / MediaTek)**: if a vendor hardware encoder starts in `LOW_LATENCY` without error but produces `0` frames in 3.5 seconds, Android automatically restarts it in the safe `MINIMAL` profile.
+- **Enhanced Wi-Fi Diagnostics & APK Auto-Discovery**: `session.log` records phone codec, encoder FPS and sent packets, clearly distinguishing Windows Firewall UDP 5000 drops from a silent phone encoder; fixed automatic latest `.apk` discovery in `Install-on-phone.cmd` and QR Wi-Fi APK sharing.
 - **Ultra Low-Latency Windows Decoder (`pipe:0` + `AUD` + `slice`)**: direct RTP → Annex-B depacketizer with Access Unit Delimiter (`AUD`), removing localhost UDP/SDP probing, frame-thread buffering and GPU→CPU readback — cuts average decode latency to **~20 ms** and increases 1080p60 throughput by 4×.
 - **Universal Camera1 & Camera2 API Selector + 60 FPS Fix**: choose `Auto`, `Camera2 API` or `Original Camera1 API` on Android and Windows; universal 60 FPS pipeline (clean `SessionConfiguration.sessionParameters`, `KEY_OPERATING_RATE`, `VBR` encoding, Qualcomm `video-hsr`, automatic EIS & idle Face Detection off at 60 FPS while keeping optical OIS).
 
@@ -23,14 +26,14 @@
 ## Start here
 
 1. Extract the **entire** Portable ZIP to a folder and run `H3HCam Receiver.exe` (keep `tools` and `models` next to the EXE).
-2. Install `H3H-Cam-5.0.3.apk` on your phone and grant **Camera** and **Microphone** permissions (via `Install-on-phone.cmd` over USB or via the built-in Wi-Fi APK QR link).
+2. Install `H3H-Cam-5.0.4.apk` on your phone and grant **Camera** and **Microphone** permissions (via `Install-on-phone.cmd` over USB or via the built-in Wi-Fi APK QR link).
 3. **USB**: select **USB · via ADB → FIND → START**.
    **Wi-Fi (no cable)**: open `H3H Cam 5.0` on the phone on the same LAN, select **Wi-Fi · RTP → FIND → START** (or use **QR Wi-Fi**).
 4. Enable **Virtual camera** for OBS, Zoom or Discord, and toggle **🎙️ MIC** to route phone microphone audio.
 
 ## Downloads
 
-[Full Portable 5.0.3](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3-Portable.zip) · [Android APK 5.0.3](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3.apk) · [SHA256SUMS.txt](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/SHA256SUMS.txt)
+[Full Portable 5.0.4](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.4/H3H-Cam-5.0.4-Portable.zip) · [Android APK 5.0.4](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.4/H3H-Cam-5.0.4.apk) · [SHA256SUMS.txt](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.4/SHA256SUMS.txt)
 
 **GPL-3.0.** Third-party components retain their own licenses: [THIRD_PARTY.md](THIRD_PARTY.md).
 

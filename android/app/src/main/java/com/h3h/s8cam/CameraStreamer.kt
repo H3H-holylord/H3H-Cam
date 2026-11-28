@@ -20,6 +20,7 @@ class CameraStreamer(
     private val context: Context,
     private var settings: StreamSettings,
     private val onError: (String) -> Unit,
+    private val minimalCodec: Boolean = false,
     private val onEncodedData: (ByteArray, Boolean, Boolean, Long) -> Unit
 ) {
     private val manager = context.getSystemService(CameraManager::class.java)
@@ -30,6 +31,7 @@ class CameraStreamer(
     private var session: CameraCaptureSession? = null
     private var legacy: SamsungLegacyCapture? = null
     private var scaler: CameraSurfaceScaler? = null
+    private var stallCheck: Runnable? = null
     private var activeCharacteristics: CameraCharacteristics? = null
     private var activeRange: Range<Int>? = null
     private var isHighSpeedSession: Boolean = false
@@ -215,6 +217,7 @@ class CameraStreamer(
                     bitrate = settings.bitrate,
                     codecName = settings.codec,
                     inputFps = if (highSpeed) fpsRange.upper else actualFps,
+                    minimalOnly = minimalCodec,
                     onError = onError,
                     onEncodedData = onEncodedData
                 )
@@ -225,6 +228,7 @@ class CameraStreamer(
                     legacy = SamsungLegacyCapture(handler, onError).also {
                         it.start(e.inputSurface, settings, route.cameraId, mode.width, mode.height, actualFps)
                     }
+                    scheduleEncoderStallCheck()
                     return@post
                 }
 
@@ -406,6 +410,23 @@ class CameraStreamer(
             "Фокус 0–$focusMax D; EV index ${ev?.lower}…${ev?.upper}, шаг $step. "
         }
         StreamStats.state = "Камера запущена"
+        scheduleEncoderStallCheck()
+    }
+
+    private fun scheduleEncoderStallCheck() {
+        // Некоторые вендорные энкодеры (Huawei Kirin, MediaTek) принимают расширенные ключи
+        // low-latency без исключения, но не выдают ни одного закодированного кадра.
+        // Если за 3.5 сек счётчик кадров не сдвинулся, просим сервис перейти на Tuning.MINIMAL.
+        if (minimalCodec || stopped) return
+        stallCheck?.let { handler.removeCallbacks(it) }
+        val startFrames = StreamStats.frames.get()
+        val check = Runnable {
+            if (!stopped && StreamStats.frames.get() == startFrames) {
+                onError(ENCODER_STALLED_FALLBACK)
+            }
+        }
+        stallCheck = check
+        handler.postDelayed(check, ENCODER_STALL_TIMEOUT_MS)
     }
 
     private fun buildRepeatingRequest(
@@ -689,9 +710,13 @@ class CameraStreamer(
 
     fun stop() {
         stopped = true
+        stallCheck?.let { handler.removeCallbacks(it) }
+        stallCheck = null
         val done = CountDownLatch(1)
         handler.post {
             try {
+                stallCheck?.let { handler.removeCallbacks(it) }
+                stallCheck = null
                 try { session?.stopRepeating() } catch (_: Exception) {}
                 try { session?.abortCaptures() } catch (_: Exception) {}
                 session?.close()
@@ -709,5 +734,10 @@ class CameraStreamer(
         done.await(4, TimeUnit.SECONDS)
         thread.quitSafely()
         thread.join(1000)
+    }
+
+    companion object {
+        const val ENCODER_STALLED_FALLBACK = "ENCODER_STALLED_FALLBACK: Кодек не выдаёт кадры — переключение на безопасный профиль"
+        const val ENCODER_STALL_TIMEOUT_MS = 3500L
     }
 }

@@ -26,4 +26,16 @@ class EncoderFpsPolicyTest {
         assertTrue(H264Encoder.preferVbr(60))
         assertFalse(H264Encoder.preferVbr(30))
     }
+
+    @Test
+    fun `selectTunings restricts encoder to MINIMAL profile when stall fallback is active`() {
+        assertEquals(
+            listOf(H264Encoder.Tuning.LOW_LATENCY, H264Encoder.Tuning.STANDARD, H264Encoder.Tuning.MINIMAL),
+            H264Encoder.selectTunings(minimalOnly = false)
+        )
+        assertEquals(
+            listOf(H264Encoder.Tuning.MINIMAL),
+            H264Encoder.selectTunings(minimalOnly = true)
+        )
+    }
 }

@@ -1,8 +1,8 @@
-H3H Cam 5.0.0 (CineAtelier Studio) - full Portable for Windows x64
+H3H Cam 5.0.4 (CineAtelier Studio) - full Portable for Windows x64
 
 1. Extract the ENTIRE ZIP into a folder. Do not run the EXE inside the ZIP.
 2. Run H3HCam Receiver.exe. .NET, FFmpeg/FFplay and ADB are included.
-3. Install H3H-Cam-5.0.0.apk on your Android phone and allow camera & microphone access.
+3. Install H3H-Cam-5.0.4.apk on your Android phone and allow camera & microphone access.
    You can download the APK over Wi-Fi right from the QR dialog, transfer it manually,
    or enable USB debugging and run Install-on-phone.cmd.
 4. Without USB debugging: open H3H Cam 5.0 on the phone on the same LAN → select Wi-Fi

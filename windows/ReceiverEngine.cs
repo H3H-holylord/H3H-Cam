@@ -121,6 +121,12 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     private readonly Stopwatch elapsed = new();
     private string androidState = L.Get("s_8daab2e0e0d1"), thermal = "—", details = "";
     private double encodedMbps;
+    private long phonePacketsSent;
+    private double phoneEncoderFps;
+    private string phoneCodec = "";
+    private string lastLoggedPhoneTelemetry = "";
+    private bool warnedZeroVideo;
+    private static readonly byte[] WifiPunchPayload = Encoding.ASCII.GetBytes("H3HCAM_PUNCH");
     private PowerTelemetry power = new();
     private string resolution = "—";
     private FaceTrackingInfo? lastFace;
@@ -387,6 +393,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             }
 
             await adb.StartStream(token);
+            if (transport == "wifi" && IPAddress.TryParse(Settings.EndpointHost(settings.PhoneIp), out var testPhoneAddr)) {
+                TrySendWifiPunch(udp, new IPEndPoint(testPhoneAddr, settings.RtpPort + 1));
+            }
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
             timeout.CancelAfter(TimeSpan.FromSeconds(7));
             RtpProbeState result;
@@ -481,10 +490,14 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             StringValue(j, "sessionId", "") != settings.WifiPairSession) return;
         androidState = StringValue(j, "state", androidState);
         encodedMbps = DoubleValue(j, "bitrateMbps", encodedMbps);
+        var encFps = DoubleValue(j, "fps", 0);
+        phoneEncoderFps = encFps;
+        Interlocked.Exchange(ref phonePacketsSent, LongValue(j, "packets", Interlocked.Read(ref phonePacketsSent)));
+        phoneCodec = StringValue(j, "codec", phoneCodec);
         var cameraFps = IntValue(j, "selectedFps", 0);
         if (cameraFps is >= 1 and <= 240) Volatile.Write(ref selectedFps, cameraFps);
         resolution = StringValue(j, "resolution", resolution);
-        details = StringValue(j, "codec", "") + " · encoder " + DoubleValue(j, "fps", 0).ToString("F1", CultureInfo.InvariantCulture) + " fps · " + StringValue(j, "controls", "");
+        details = phoneCodec + " · encoder " + encFps.ToString("F1", CultureInfo.InvariantCulture) + " fps · " + StringValue(j, "controls", "");
         thermal = BatterySummary(j);
         power = PowerTelemetry.From(j);
         if (j.TryGetProperty("faceX", out var fx) && fx.ValueKind == JsonValueKind.Number)
@@ -545,6 +558,8 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
 
             received = frames = packets = oldBytes = oldFrames = 0;
             lostPackets = recoveredPackets = nackRequests = oldLostPackets = oldRecoveredPackets = 0;
+            phonePacketsSent = 0; phoneEncoderFps = 0; phoneCodec = "";
+            lastLoggedPhoneTelemetry = ""; warnedZeroVideo = false;
             adaptiveBitrate = settings.EffectiveBitrateMbps(effectiveTransport) * 1_000_000;
             stableSeconds = 0;
             modeSampleCount = 0; modeVerification = L.Get("s_e56fd1b2ef0f");
@@ -702,8 +717,12 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             control = new UdpClient(AddressFamily.InterNetwork);
             // Match the LAN source address advertised to Android (also on PCs with VPN/tethering).
             control.Client.Bind(new IPEndPoint(IPAddress.Parse(settings.PcIp), 0));
-            if (expectedPhoneAddress != null)
+            if (expectedPhoneAddress != null) {
                 controlEndpoint = new IPEndPoint(expectedPhoneAddress, settings.RtpPort + 1);
+                // Открываем обратный 4-кортеж (pc:RtpPort <-> phone:RtpPort+1) в Stateful Windows Firewall
+                // до прихода первых RTP-пакетов — критично для Public Wi-Fi профилей.
+                TrySendWifiPunch(socket, controlEndpoint);
+            }
             inputTask = Guard(() => ReceiveRtp(socket, inputToken));
         } else {
             var server = new TcpListener(IPAddress.Loopback, settings.UsbPort);
@@ -866,12 +885,15 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
                     var j = doc.RootElement;
                     androidState = StringValue(j, "state", androidState);
                     encodedMbps = DoubleValue(j, "bitrateMbps", encodedMbps);
+                    phoneEncoderFps = DoubleValue(j, "fps", phoneEncoderFps);
+                    Interlocked.Exchange(ref phonePacketsSent, LongValue(j, "packets", Interlocked.Read(ref phonePacketsSent)));
+                    phoneCodec = StringValue(j, "codec", phoneCodec);
                     resolution = StringValue(j, "resolution", resolution);
                     var actual = IntValue(j, "selectedFps", 0); if (actual > 0) selectedFps = actual;
                     var dropped = IntValue(j, "dropped", 0);
                     Volatile.Write(ref droppedFrames, dropped);
                     var dropStr = dropped > 0 ? $" · drop {dropped}" : "";
-                    details = StringValue(j, "codec", "—") + dropStr + " · " + StringValue(j, "controls", "");
+                    details = (phoneCodec.Length > 0 ? phoneCodec : "—") + dropStr + " · " + StringValue(j, "controls", "");
                     thermal = BatterySummary(j);
                     power = PowerTelemetry.From(j);
                     Interlocked.Exchange(ref lastTelemetry, Environment.TickCount64);
@@ -1015,6 +1037,15 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
         } catch { }
     }
 
+    private void TrySendWifiPunch(UdpClient? socket, IPEndPoint? endpoint) {
+        if (socket == null || endpoint == null) return;
+        try {
+            socket.Send(WifiPunchPayload, WifiPunchPayload.Length, endpoint);
+        } catch (Exception ex) {
+            log("Wi-Fi UDP punch · " + ex.Message);
+        }
+    }
+
     private void SendWifiControl(object command) {
         var socket = PairedWifi ? incoming : control;
         var endpoint = controlEndpoint;
@@ -1063,15 +1094,19 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
 
                     androidState = StringValue(j, "state", androidState);
                     encodedMbps = DoubleValue(j, "bitrateMbps", encodedMbps);
+                    var encFps = DoubleValue(j, "fps", 0);
+                    phoneEncoderFps = encFps;
+                    Interlocked.Exchange(ref phonePacketsSent, LongValue(j, "packets", Interlocked.Read(ref phonePacketsSent)));
                     var cameraFps = IntValue(j, "selectedFps", 0);
                     if (cameraFps is >= 1 and <= 240) Volatile.Write(ref selectedFps, cameraFps);
                     var codec = StringValue(j, "codec", "—");
+                    phoneCodec = codec;
                     var controls = StringValue(j, "controls", "");
                     var camera = StringValue(j, "camera", "");
                     var dropped = IntValue(j, "dropped", 0);
                     Volatile.Write(ref droppedFrames, dropped);
                     var dropStr = dropped > 0 ? $" · drop {dropped}" : "";
-                    details = codec + " · encoder " + DoubleValue(j, "fps", 0).ToString("F1", CultureInfo.InvariantCulture) + " fps" +
+                    details = codec + " · encoder " + encFps.ToString("F1", CultureInfo.InvariantCulture) + " fps" +
                         (camera.Length == 0 ? "" : " · " + camera) + dropStr + (controls.Length == 0 ? "" : " · " + controls);
                     resolution = StringValue(j, "resolution", resolution);
                     thermal = BatterySummary(j);
@@ -1111,6 +1146,9 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
     private static int IntValue(JsonElement json, string name, int fallback) =>
         json.TryGetProperty(name, out var item) && item.TryGetInt32(out var value) ? value : fallback;
 
+    private static long LongValue(JsonElement json, string name, long fallback) =>
+        json.TryGetProperty(name, out var item) && item.TryGetInt64(out var value) ? value : fallback;
+
     private static string BatterySummary(JsonElement json) {
         return PowerTelemetry.From(json).Compact;
     }
@@ -1133,6 +1171,26 @@ public sealed class ReceiverEngine(Settings initialSettings, Action<string> log)
             var tick = Environment.TickCount64;
             var idle = tick - Interlocked.Read(ref lastReceive);
             var telemetryAge = tick - Interlocked.Read(ref lastTelemetry);
+            var receivedPackets = Interlocked.Read(ref packets);
+            var telemetryKey = $"{androidState}|{phoneCodec}";
+            if (telemetryAge < 5000 && !string.IsNullOrEmpty(phoneCodec) && telemetryKey != lastLoggedPhoneTelemetry) {
+                lastLoggedPhoneTelemetry = telemetryKey;
+                log($"Phone telemetry · state={androidState}, codec={phoneCodec}, encFps={phoneEncoderFps.ToString("F1", CultureInfo.InvariantCulture)}, sentPackets={Interlocked.Read(ref phonePacketsSent)}, details={details}");
+            }
+            if (effectiveTransport == "wifi" && receivedPackets == 0) {
+                if (!PairedWifi) TrySendWifiPunch(incoming, controlEndpoint);
+                if (!warnedZeroVideo && elapsed.Elapsed.TotalSeconds >= 6 && telemetryAge < 5000) {
+                    warnedZeroVideo = true;
+                    var sent = Interlocked.Read(ref phonePacketsSent);
+                    if (sent > 0) {
+                        log($"DIAGNOSTIC · Phone sent {sent} RTP packets (encFps={phoneEncoderFps.ToString("F1", CultureInfo.InvariantCulture)}, codec={phoneCodec}), " +
+                            $"but PC received 0 packets on UDP {settings.RtpPort}. Check Windows Firewall (switch Wi-Fi profile to Private or allow UDP {settings.RtpPort}) and router client isolation.");
+                    } else {
+                        log($"DIAGNOSTIC · Phone telemetry active (state={androidState}, codec={phoneCodec}, encFps={phoneEncoderFps.ToString("F1", CultureInfo.InvariantCulture)}), " +
+                            "but phone encoder sent 0 packets. Waiting for automatic minimal-codec fallback or try switching codec to HEVC / USB transport.");
+                    }
+                }
+            }
             var lost = Interlocked.Read(ref lostPackets);
             var recovered = Interlocked.Read(ref recoveredPackets);
             var newLost = lost - oldLostPackets;

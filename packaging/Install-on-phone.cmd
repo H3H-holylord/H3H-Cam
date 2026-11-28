@@ -3,7 +3,9 @@ chcp 65001 >nul
 setlocal
 title H3H Cam - install on phone
 if not exist "%~dp0tools\adb.exe" goto incomplete
-if not exist "%~dp0H3H-Cam-5.0.0.apk" goto incomplete
+set "H3HCAM_APK="
+for %%F in ("%~dp0H3H-Cam-*.apk") do set "H3HCAM_APK=%%~fF"
+if not defined H3HCAM_APK goto incomplete
 echo Enable USB debugging on your phone and connect a data cable.
 echo Unlock it and approve the debugging prompt if it appears.
 echo This installs H3H Cam on ONE connected and authorized phone.
@@ -20,7 +22,7 @@ for /f "tokens=1,2" %%A in ('adb.exe devices') do if "%%B"=="device" (
     set "H3HCAM_PHONE=%%A"
 )
 if not "%H3HCAM_COUNT%"=="1" goto no_single_phone
-adb.exe -s "%H3HCAM_PHONE%" install -r -g "%~dp0H3H-Cam-5.0.0.apk"
+adb.exe -s "%H3HCAM_PHONE%" install -r -g "%H3HCAM_APK%"
 if errorlevel 1 goto failed
 popd
 echo.

@@ -1,15 +1,18 @@
 ![H3H Cam](docs/banner.svg)
 
-# Камера и микрофон телефона для Windows и OBS · 5.0.3 CineAtelier Studio
+# Камера и микрофон телефона для Windows и OBS · 5.0.4 CineAtelier Studio
 
 **Русский** · [English](README.en.md)
 
-**H3H Cam 5.0.3** превращает Android-телефон в студийную камеру и беспроводной/USB-микрофон для стримов, видеозвонков и записи. Все настройки задаются в Windows-клиенте; смартфон аппаратно кодирует видео (H.264 / HEVC) и передаёт чистый звук 48 кГц.
+**H3H Cam 5.0.4** превращает Android-телефон в студийную камеру и беспроводной/USB-микрофон для стримов, видеозвонков и записи. Все настройки задаются в Windows-клиенте; смартфон аппаратно кодирует видео (H.264 / HEVC) и передаёт чистый звук 48 кГц.
 
-[**Скачать полный Portable 5.0.3**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3-Portable.zip) · [Быстрый старт](docs/QUICKSTART.md) · [Сборка](docs/BUILD.md) · [Сообщить о проблеме](https://github.com/H3H-holylord/H3H-Cam/issues)
+[**Скачать полный Portable 5.0.4**](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.4/H3H-Cam-5.0.4-Portable.zip) · [Быстрый старт](docs/QUICKSTART.md) · [Сборка](docs/BUILD.md) · [Сообщить о проблеме](https://github.com/H3H-holylord/H3H-Cam/issues)
 
-## Что нового в 5.0.3 (CineAtelier Studio)
+## Что нового в 5.0.4 (CineAtelier Studio)
 
+- **Симметричный UDP (автопрохождение Windows Firewall в Public Wi-Fi)**: Android теперь отправляет RTP-видео с того же порта (`5001`), куда Windows шлёт управляющие команды и `UDP-punch` с порта `5000` — устраняет «чёрный экран при работающем трекинге лица» на Public Wi-Fi без ручной настройки Брандмауэра.
+- **Автоматический fallback «молчащего» аппаратного кодека (Huawei Kirin / MediaTek)**: если вендорный энкодер запустился в `LOW_LATENCY`, но за 3.5 сек выдал `0` кадров, смартфон автоматически перезапускает его в безопасном профиле `MINIMAL`.
+- **Расширенная Wi-Fi диагностика в `session.log` + фикс раздачи APK**: лог Windows фиксирует состояние кодека/FPS/отправленных пакетов телефона и явно отличает блокировку UDP 5000 Брандмауэром от молчания энкодера; исправлен автопоиск актуального `.apk` в `Установить на телефон.cmd` и в раздаче APK по Wi-Fi QR.
 - **Ультра-низколатентный декодер Windows (`pipe:0` + `AUD` + `slice`)**: прямой депакетизатор RTP → Annex-B с маркером конца кадра `AUD`, без локального UDP/SDP-хопа, без многокадрового буфера декодера и GPU→CPU readback — средняя задержка декодирования снижена до **~20 мс** (старт в 6.5× быстрее, пропускная способность 1080p60 выросла в 4×).
 - **Выбор Camera API (`Авто` / `Camera2 API` / `Оригинальный API (Camera1 / 60 FPS)`) + универсальные 60 FPS**: переключатель на главном экране Android и во вкладке «Камера» Windows-клиента; универсальная поддержка Camera1 (`video-hsr` + `video-hfr`), чистые `SessionConfiguration.sessionParameters` для Camera2, `KEY_OPERATING_RATE` + `VBR` без дропа кадров и ряби, автоматическое отключение EIS и фонового Face Detection при 60 FPS с сохранением OIS.
 
@@ -33,16 +36,16 @@
 
 | Файл | Назначение |
 |---|---|
-| [Полный Portable 5.0.3 — рекомендуется](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3-Portable.zip) | Windows 5.0.3, .NET, FFmpeg/FFplay, ADB с DLL, виртуальная камера, APK 5.0.3 и AI-модель |
-| [Android APK 5.0.3](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/H3H-Cam-5.0.3.apk) | Android 5.0.3 (Android 8+): Camera1/Camera2 60 FPS, микрофон 48 кГц, Wi-Fi маяк и обход VPN |
-| [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.3/SHA256SUMS.txt) | Контрольные суммы файлов релиза |
+| [Полный Portable 5.0.4 — рекомендуется](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.4/H3H-Cam-5.0.4-Portable.zip) | Windows 5.0.4, .NET, FFmpeg/FFplay, ADB с DLL, виртуальная камера, APK 5.0.4 и AI-модель |
+| [Android APK 5.0.4](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.4/H3H-Cam-5.0.4.apk) | Android 5.0.4 (Android 8+): симметричный UDP, авто-fallback кодека, Camera1/Camera2 60 FPS, микрофон 48 кГц |
+| [SHA256](https://github.com/H3H-holylord/H3H-Cam/releases/download/v5.0.4/SHA256SUMS.txt) | Контрольные суммы файлов релиза |
 
 **Новым пользователям: скачайте полный Portable и распакуйте его целиком.** Отдельно устанавливать .NET, FFmpeg, FFplay или ADB не требуется.
 
 ## Начать работу
 
 1. Распакуйте весь архив Portable в отдельную папку и запустите `H3HCam Receiver.exe`.
-2. Обновите или установите `H3H-Cam-5.0.3.apk` на смартфон и разрешите доступ к **камере** и **микрофону** (по кабелю через `Установить на телефон.cmd` или по Wi-Fi через кнопку скачивания APK внутри окна **«QR Wi-Fi»**).
+2. Обновите или установите `H3H-Cam-5.0.4.apk` на смартфон и разрешите доступ к **камере** и **микрофону** (по кабелю через `Установить на телефон.cmd` или по Wi-Fi через кнопку скачивания APK внутри окна **«QR Wi-Fi»**).
 3. **По кабелю**: выберите **USB · через ADB → НАЙТИ → СТАРТ**.
    **По Wi-Fi (без кабеля)**: откройте `H3H Cam 5.0` на телефоне в одной локальной сети с ПК, выберите **Wi-Fi · RTP → НАЙТИ → СТАРТ** (или нажмите **«QR Wi-Fi»** и отсканируйте код).
 4. Включите **«Виртуальная камера»** для OBS, Discord, Zoom и браузеров. Микрофон телефона включается кнопкой **🎙️ MIC** под монитором или на вкладке **«Звук и OBS»**.

@@ -18,6 +18,7 @@ class H264Encoder(
     private val bitrate: Int,
     private val codecName: String = "h264",
     private val inputFps: Int = fps,
+    private val minimalOnly: Boolean = false,
     private val onError: (String) -> Unit,
     private val onEncodedData: (ByteArray, Boolean, Boolean, Long) -> Unit
 ) {
@@ -28,9 +29,9 @@ class H264Encoder(
         bitrate: Int,
         onError: (String) -> Unit,
         onEncodedData: (ByteArray, Boolean, Boolean, Long) -> Unit
-    ) : this(width, height, fps, bitrate, "h264", fps, onError, onEncodedData)
+    ) : this(width, height, fps, bitrate, "h264", fps, false, onError, onEncodedData)
 
-    private enum class Tuning { LOW_LATENCY, STANDARD, MINIMAL }
+    internal enum class Tuning { LOW_LATENCY, STANDARD, MINIMAL }
 
     private val isHevc get() = codecName.equals("hevc", ignoreCase = true)
     private val mimeType get() = if (isHevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
@@ -54,8 +55,9 @@ class H264Encoder(
         if (candidates.isEmpty()) error("На телефоне нет Surface ${if (isHevc) "HEVC" else "H.264"} encoder")
 
         val failures = mutableListOf<String>()
+        val tunings = selectTunings(minimalOnly)
         for (candidate in candidates) {
-            for (tuning in Tuning.entries) {
+            for (tuning in tunings) {
                 var attemptedCodec: MediaCodec? = null
                 var attemptedSurface: Surface? = null
                 var started = false
@@ -301,6 +303,9 @@ class H264Encoder(
             if (inputFps > outputFps) outputFps.toFloat() + 1.5f else null
 
         fun preferVbr(outputFps: Int): Boolean = outputFps >= 60
+
+        internal fun selectTunings(minimalOnly: Boolean): List<Tuning> =
+            if (minimalOnly) listOf(Tuning.MINIMAL) else Tuning.entries
 
         private fun encodersForMime(mime: String): List<EncoderBase> {
             return try {
